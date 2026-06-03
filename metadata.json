@@ -1,0 +1,6 @@
+{
+  "name": "Control de CLC y Catálogos",
+  "description": "Sistema para la creación de Cuentas por Liquidar Certificadas (CLC) con asignación de folio al finalizar, generación de Excel y PDF, y administración de catálogos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
