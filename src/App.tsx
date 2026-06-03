@@ -5,13 +5,14 @@
 
 import { useState, useEffect } from "react";
 import { AppCatalogs, CLCDocument } from "./types";
-import { 
-  getStoredCatalogs, 
-  saveStoredCatalogs, 
-  getStoredDocuments, 
-  saveStoredDocuments, 
-  finalizeDocumentAndAssignFolio 
-} from "./utils/initialData";
+import { INITIAL_CATALOGS, INITIAL_DOCUMENTS } from "./utils/initialData";
+import {
+  deletePersistedDocument,
+  finalizeAndPersistDocument,
+  loadAppData,
+  persistDocument,
+  persistCatalogs
+} from "./utils/appStore";
 import CatalogManager from "./components/CatalogManager";
 import CLCForm from "./components/CLCForm";
 import CLCViewer from "./components/CLCViewer";
@@ -30,10 +31,14 @@ import {
 
 type ViewMode = "lista" | "catalogos" | "crear";
 
+function getDocumentsFromPersistResult(result: { documents: CLCDocument[] } | CLCDocument[]): CLCDocument[] {
+  return Array.isArray(result) ? result : result.documents;
+}
+
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("lista");
-  const [catalogs, setCatalogs] = useState<AppCatalogs>(getStoredCatalogs());
-  const [documents, setDocuments] = useState<CLCDocument[]>(getStoredDocuments());
+  const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
+  const [documents, setDocuments] = useState<CLCDocument[]>(INITIAL_DOCUMENTS);
   const [editingDoc, setEditingDoc] = useState<CLCDocument | null>(null);
 
   // Concurrency Simulation Logs list
@@ -50,25 +55,74 @@ export default function App() {
     }
   ]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    loadAppData()
+      .then(snapshot => {
+        if (!isMounted) return;
+        setCatalogs(snapshot.catalogs);
+        setDocuments(snapshot.documents);
+        if (snapshot.storageMode === "supabase") {
+          setSimulationLog(prev => [
+            {
+              time: new Date().toLocaleTimeString(),
+              text: "Base central Supabase activa. Folios y expedientes se guardan en Postgres.",
+              type: "info"
+            },
+            ...prev
+          ]);
+        } else if (snapshot.dataFilePath) {
+          setSimulationLog(prev => [
+            {
+              time: new Date().toLocaleTimeString(),
+              text: `Archivo local de datos activo: ${snapshot.dataFilePath}`,
+              type: "info"
+            },
+            ...prev
+          ]);
+        }
+      })
+      .catch(error => {
+        console.error("Error loading app data", error);
+        setSimulationLog(prev => [
+          {
+            time: new Date().toLocaleTimeString(),
+            text: "No se pudo cargar la base de datos configurada. Se usaran datos iniciales en memoria.",
+            type: "warning"
+          },
+          ...prev
+        ]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Sync Catalogs list
   const handleCatalogsChange = (updated: AppCatalogs) => {
     setCatalogs(updated);
-    saveStoredCatalogs(updated);
+    persistCatalogs(updated).then(result => {
+      if (result) {
+        setCatalogs(result.catalogs);
+        setDocuments(result.documents);
+      }
+    }).catch(error => {
+      console.error("Error saving catalogs", error);
+      alert("No se pudieron guardar los catalogos.");
+    });
   };
 
   // Safe document save operation
-  const handleSaveDocument = (doc: CLCDocument, finalize: boolean) => {
+  const handleSaveDocument = async (doc: CLCDocument, finalize: boolean) => {
     let updatedDocs = [...documents];
     const isEdit = updatedDocs.some(d => d.id === doc.id);
 
     if (finalize) {
-      // 1. Concurrent safe assignment: Fetch the absolute latest documents from state/storage
-      // and calculate next folio to lock it synchronously without overlaps!
-      const currentList = getStoredDocuments();
-      const { finalizedDoc, updatedGlobalList } = finalizeDocumentAndAssignFolio(doc, currentList);
+      const { finalizedDoc, documents: persistedDocs } = await finalizeAndPersistDocument(doc, documents);
       
-      setDocuments(updatedGlobalList);
-      saveStoredDocuments(updatedGlobalList);
+      setDocuments(persistedDocs);
       
       // Update logs
       const logTime = new Date().toLocaleTimeString();
@@ -96,14 +150,14 @@ export default function App() {
         updatedDocs.push(draftDoc);
       }
 
-      setDocuments(updatedDocs);
-      saveStoredDocuments(updatedDocs);
+      const persisted = await persistDocument(draftDoc, updatedDocs);
+      setDocuments(getDocumentsFromPersistResult(persisted));
 
       const logTime = new Date().toLocaleTimeString();
       setSimulationLog(prev => [
         {
           time: logTime,
-          text: `Borrador "${draftDoc.concepto.substring(0, 30)}..." guardado de forma local. Folio pendiente.`,
+          text: `Borrador "${draftDoc.concepto.substring(0, 30)}..." guardado. Folio pendiente.`,
           type: "info"
         },
         ...prev
@@ -121,8 +175,7 @@ export default function App() {
     const currentYear = 2026;
     
     // Fetch latest storage state to prevent out-of-sync simulation state
-    const latestDocs = getStoredDocuments();
-    const yearDocs = latestDocs.filter(d => d.año === currentYear && d.estado === "finalizado");
+    const yearDocs = documents.filter(d => d.año === currentYear && d.estado === "finalizado");
     
     let nextNum = 1;
     if (yearDocs.length > 0) {
@@ -179,7 +232,11 @@ export default function App() {
 
     const updated = [...documents, simDoc];
     setDocuments(updated);
-    saveStoredDocuments(updated);
+    persistDocument(simDoc, updated).then(result => {
+      setDocuments(getDocumentsFromPersistResult(result));
+    }).catch(error => {
+      console.error("Error saving simulation document", error);
+    });
 
     const logTime = new Date().toLocaleTimeString();
     setSimulationLog(prev => [
@@ -197,7 +254,12 @@ export default function App() {
     if (confirm("¿Estás completamente seguro de que deseas eliminar este registro de la lista oficial?")) {
       const updated = documents.filter(d => d.id !== id);
       setDocuments(updated);
-      saveStoredDocuments(updated);
+      deletePersistedDocument(id, updated).then(result => {
+        setDocuments(getDocumentsFromPersistResult(result));
+      }).catch(error => {
+        console.error("Error deleting document", error);
+        alert("No se pudo actualizar la base de datos despues de eliminar.");
+      });
       
       const logTime = new Date().toLocaleTimeString();
       setSimulationLog(prev => [

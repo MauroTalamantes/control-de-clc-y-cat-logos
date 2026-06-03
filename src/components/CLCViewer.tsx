@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
 import { CLCDocument } from "../types";
 import { downloadDocExcel } from "../utils/excelGenerator";
 import { downloadDocPDF } from "../utils/pdfGenerator";
 import { 
-  FileSpreadsheet, 
+  FileSpreadsheet, // Added for download selected button
   FileText, 
   Edit, 
   Trash2, 
@@ -43,7 +43,22 @@ export default function CLCViewer({
   const [pageSize, setPageSize] = useState(10);
   const [activeTooltip, setActiveTooltip] = useState<TooltipState>(null);
   const [previewMode, setPreviewMode] = useState<"formato" | "datos">("formato");
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const dateFilterRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectDoc = (docId: string, isChecked: boolean) => {
+    setSelectedDocumentIds(prev =>
+      isChecked ? [...prev, docId] : prev.filter(id => id !== docId)
+    );
+  };
+
+  const handleSelectAllDocs = (isChecked: boolean) => {
+    if (isChecked) {
+      setSelectedDocumentIds(paginatedDocs.map(doc => doc.id));
+    } else {
+      setSelectedDocumentIds([]);
+    }
+  };
 
   const getConceptName = (doc: CLCDocument) => doc.items[0]?.objetoNombre || doc.concepto;
   const getConceptKey = (doc: CLCDocument) => doc.items[0]?.objetoClave || "-";
@@ -145,6 +160,25 @@ export default function CLCViewer({
           </div>
           
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+            {/* Download Selected Button */}
+            {selectedDocumentIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  selectedDocumentIds.forEach(docId => {
+                    const doc = documents.find(d => d.id === docId);
+                    if (doc) {
+                      downloadDocExcel(doc);
+                    }
+                  });
+                  setSelectedDocumentIds([]); // Clear selection after download
+                }}
+                className="bg-indigo-600 text-white rounded-lg px-4 py-2 text-xs font-semibold hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-hidden transition-all flex items-center justify-center gap-2"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                Descargar seleccionados ({selectedDocumentIds.length})
+              </button>
+            )}
             {/* Search Input */}
             <div className="relative flex-1">
               <input
