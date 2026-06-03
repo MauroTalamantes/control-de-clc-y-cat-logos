@@ -347,50 +347,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Analytics Summary Stats Panel */}
-      <section className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white p-6 select-none shrink-0 border-b border-indigo-950">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Card 1 */}
-          <div className="bg-indigo-950/40 backdrop-blur-sm border border-indigo-700/30 p-4 rounded-xl flex items-center gap-4 shadow-sm">
-            <div className="p-3 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-lg">
-              <TrendingUp className="h-5 w-5" />
-            </div>
-            <div>
-              <span className="text-[10px] font-semibold text-indigo-200 tracking-wider block uppercase">Total Ejercicio Liquidado</span>
-              <span className="text-xl font-black font-mono tracking-tight text-white mt-1 block">
-                $ {totalInvoiced.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
-
-          {/* Card 2 */}
-          <div className="bg-indigo-950/40 backdrop-blur-sm border border-indigo-700/30 p-4 rounded-xl flex items-center gap-4 shadow-sm">
-            <div className="p-3 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-lg">
-              <FileText className="h-5 w-5" />
-            </div>
-            <div>
-              <span className="text-[10px] font-semibold text-indigo-200 tracking-wider block uppercase">Folios CLC Emitidos</span>
-              <span className="text-xl font-black text-white mt-1 block">
-                {finalizedDocs.length} Expedientes
-              </span>
-            </div>
-          </div>
-
-          {/* Card 3 */}
-          <div className="bg-indigo-950/40 backdrop-blur-sm border border-indigo-700/30 p-4 rounded-xl flex items-center gap-4 shadow-sm">
-            <div className="p-3 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded-lg">
-              <Clock className="h-5 w-5 animate-pulse" />
-            </div>
-            <div>
-              <span className="text-[10px] font-semibold text-indigo-200 tracking-wider block uppercase">Borradores en Tránsito</span>
-              <span className="text-xl font-black text-indigo-100 mt-1 block">
-                {draftCount} Activos
-              </span>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {viewMode === "lista" && (
