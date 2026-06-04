@@ -147,8 +147,10 @@ const areAllPageDocsSelected =
   paginatedDocs.length > 0 &&
   paginatedDocs.every(doc => selectedDocumentIds.includes(doc.id));
 
-const handleDownloadSelectedExcel = () => {
-  selectedDocs.forEach(doc => downloadDocExcel(doc));
+const handleDownloadSelectedExcel = async () => {
+  for (const doc of selectedDocs) {
+    await downloadDocExcel(doc);
+  }
   setSelectedDocumentIds([]);
 };
 
@@ -946,7 +948,6 @@ const handleDownloadSelectedPDF = () => {
     </div>
   );
 }
-
 
 
 

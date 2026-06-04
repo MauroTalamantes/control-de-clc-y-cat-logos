@@ -21,6 +21,36 @@ function repaintWindow(window) {
   }
 }
 
+function normalizeExcelFileName(fileName) {
+  const rawName = typeof fileName === "string" ? fileName.replace(/\.xlsx$/i, "") : "CLC";
+  const safeName = rawName
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 180);
+  return `${safeName || "CLC"}.xlsx`;
+}
+
+function getFileBuffer(bytes) {
+  if (bytes instanceof Uint8Array) {
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  if (bytes instanceof ArrayBuffer) {
+    return Buffer.from(bytes);
+  }
+  throw new TypeError("Excel file bytes are required.");
+}
+
+async function removeMarkOfTheWeb(filePath) {
+  if (process.platform !== "win32") return;
+  try {
+    await fs.promises.unlink(`${filePath}:Zone.Identifier`);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.warn("Could not remove Zone.Identifier from generated Excel file.", error);
+    }
+  }
+}
+
 function createInitialData() {
   return {
     catalogs: null,
@@ -145,6 +175,29 @@ app.whenReady().then(() => {
     const nextPath = path.join(result.filePaths[0], "clc-data.json");
     const current = readStore();
     return writeStore(current, nextPath);
+  });
+
+  ipcMain.handle("clc-file:save-excel", async (event, payload) => {
+    const fileName = normalizeExcelFileName(payload?.fileName);
+    const fileBuffer = getFileBuffer(payload?.bytes);
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      title: "Guardar archivo Excel",
+      defaultPath: path.join(app.getPath("downloads"), fileName),
+      filters: [{ name: "Libro de Excel", extensions: ["xlsx"] }]
+    };
+    const result = parentWindow
+      ? await dialog.showSaveDialog(parentWindow, options)
+      : await dialog.showSaveDialog(options);
+
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    const filePath = result.filePath.toLowerCase().endsWith(".xlsx")
+      ? result.filePath
+      : `${result.filePath}.xlsx`;
+    await fs.promises.writeFile(filePath, fileBuffer);
+    await removeMarkOfTheWeb(filePath);
+    return { canceled: false, filePath };
   });
 
   createWindow();

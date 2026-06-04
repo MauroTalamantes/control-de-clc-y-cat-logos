@@ -481,19 +481,26 @@ export async function generateExcelBuffer(doc: CLCDocument) {
 export async function downloadDocExcel(doc: CLCDocument) {
   try {
     const buffer = await generateExcelBuffer(doc);
+    const fileName = `${doc.folio || "CLC_Borrador"}_${doc.proveedorNombre.replace(/\s+/g, "_")}.xlsx`;
+
+    if (window.clcFile) {
+      await window.clcFile.saveExcel(fileName, buffer);
+      return;
+    }
+
     const blob = new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${doc.folio || "CLC_Borrador"}_${doc.proveedorNombre.replace(/\s+/g, "_")}.xlsx`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error("Error generating Excel file", error);
-    alert("No se pudo generar el archivo Excel con el formato.");
+    alert("No se pudo generar o guardar el archivo Excel con el formato.");
   }
 }

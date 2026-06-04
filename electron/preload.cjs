@@ -7,3 +7,7 @@ contextBridge.exposeInMainWorld("clcStore", {
   finalizeDocument: document => ipcRenderer.invoke("clc-store:finalize-document", document),
   selectDataFolder: () => ipcRenderer.invoke("clc-store:select-data-folder")
 });
+
+contextBridge.exposeInMainWorld("clcFile", {
+  saveExcel: (fileName, bytes) => ipcRenderer.invoke("clc-file:save-excel", { fileName, bytes })
+});

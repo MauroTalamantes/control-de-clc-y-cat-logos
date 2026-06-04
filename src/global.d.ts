@@ -30,5 +30,11 @@ declare global {
         dataFilePath: string;
       }>;
     };
+    clcFile?: {
+      saveExcel: (fileName: string, bytes: Uint8Array) => Promise<{
+        canceled: boolean;
+        filePath?: string;
+      }>;
+    };
   }
 }
