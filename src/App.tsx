@@ -384,9 +384,14 @@ export default function App() {
           
           {/* Logo brand */}
           <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-br from-indigo-600 to-slate-900 p-2.5 rounded-xl text-white shadow-md shadow-indigo-900/10 shrink-0">
+            {/* <div className="bg-gradient-to-br from-indigo-600 to-slate-900 p-2.5 rounded-xl text-white shadow-md shadow-indigo-900/10 shrink-0">
               <Building2 className="h-6 w-6 text-indigo-50" />
-            </div>
+            </div> */}
+            <img 
+              src="https://gpe.gob.mx/wp-content/uploads/2025/03/AYTO-GPE-GUINDA1-300x168.png" 
+              alt="Logo Ayuntamiento" 
+              className="h-12 w-auto object-contain shrink-0" 
+            />
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold tracking-widest text-indigo-900 bg-indigo-50 border border-indigo-150 px-2 py-0.5 rounded-full select-none">
