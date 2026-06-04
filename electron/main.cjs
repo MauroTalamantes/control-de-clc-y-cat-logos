@@ -2,10 +2,23 @@ const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 
+// The app is form/report oriented and does not need GPU rendering. Some Windows
+// graphics drivers can leave Chromium's accelerated surface stale until the
+// window is minimized or restored, which makes the UI appear to stop accepting clicks.
+if (process.platform === "win32") {
+  app.disableHardwareAcceleration();
+}
+
 const isDev = !app.isPackaged;
 
 function getDefaultDataPath() {
   return path.join(app.getPath("userData"), "clc-data.json");
+}
+
+function repaintWindow(window) {
+  if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+    window.webContents.invalidate();
+  }
 }
 
 function createInitialData() {
@@ -91,6 +104,16 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
   }
+
+  mainWindow.on("focus", () => repaintWindow(mainWindow));
+  mainWindow.on("restore", () => repaintWindow(mainWindow));
+  mainWindow.on("unresponsive", () => {
+    console.error("The main window renderer became unresponsive.");
+  });
+  mainWindow.on("responsive", () => {
+    console.info("The main window renderer became responsive again.");
+    repaintWindow(mainWindow);
+  });
 }
 
 app.whenReady().then(() => {
