@@ -308,6 +308,7 @@ export default function App() {
         ...prev
       ]);
 
+      await downloadDocExcel(updatedFinalizedDoc, { openAfterSave: false });
       alert(`Expediente ${updatedFinalizedDoc.folio} actualizado correctamente.`);
     } else if (finalize) {
       const {
