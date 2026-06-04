@@ -497,7 +497,11 @@ const handleDownloadSelectedPDF = async () => {
                       {/* Concepto de Gasto */}
                       <td className="p-3 align-top overflow-hidden">
                         <div className="w-full min-w-0 space-y-1">
-                          <span className="font-extrabold text-slate-800 block w-full truncate" title={getConceptName(doc)}>
+                          <span
+                            className="font-extrabold text-slate-800 block w-full truncate"
+                            onMouseEnter={event => showTooltipIfTruncated(event, getConceptName(doc))}
+                            onMouseLeave={() => setActiveTooltip(null)}
+                          >
                             {getConceptName(doc)}
                           </span>
                           <span className="text-[10px] text-slate-500 font-medium block w-full truncate uppercase leading-tight" title={getConceptKey(doc)}>
@@ -508,7 +512,11 @@ const handleDownloadSelectedPDF = async () => {
 
                       {/* Proveedor */}
                       <td className="p-3 align-middle overflow-hidden font-extrabold text-slate-800 text-xs">
-                        <span className="block w-full truncate" title={doc.proveedorNombre}>
+                        <span
+                          className="block w-full truncate"
+                          onMouseEnter={event => showTooltipIfTruncated(event, doc.proveedorNombre)}
+                          onMouseLeave={() => setActiveTooltip(null)}
+                        >
                           {doc.proveedorNombre}
                         </span>
                       </td>

@@ -63,6 +63,7 @@ const RequiredMark = () => <span className="text-red-600 font-black" aria-hidden
 
 export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, documentToEdit }: CLCFormProps) {
   // Setup standard state
+  const [folio, setFolio] = useState<string>("");
   const [año, setAño] = useState<number>(2026);
   const [selectedUnidadId, setSelectedUnidadId] = useState<string>("");
   const [selectedBancoId, setSelectedBancoId] = useState<string>("");
@@ -100,6 +101,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         id: `bn_${index + 1}`,
         nombre
       }));
+  const isEditingFinalized = documentToEdit?.estado === "finalizado";
 
   useEffect(() => {
     if (!openBudgetPicker && !isBancoPickerOpen) return;
@@ -118,6 +120,12 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
   const normalizeSearch = (value: string) => {
     return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  };
+
+  const normalizeFolioInput = (value: string) => {
+    const match = value.trim().toUpperCase().match(/^CLC-(\d+)\/(\d{4})$/);
+    if (!match) return value.trim().toUpperCase();
+    return `CLC-${String(Number.parseInt(match[1], 10)).padStart(3, "0")}/${match[2]}`;
   };
 
   const matchesSearch = (query: string, ...values: string[]) => {
@@ -243,6 +251,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   useEffect(() => {
     if (documentToEdit) {
       initializedNewFormRef.current = false;
+      setFolio(documentToEdit.folio || "");
       setAño(documentToEdit.año);
       
       const matchedUnidad = catalogs.unidades.find(u => u.clave === documentToEdit.unidadClave);
@@ -278,6 +287,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     } else {
       if (initializedNewFormRef.current) return;
       initializedNewFormRef.current = true;
+      setFolio("");
 
       const savedDraft = localStorage.getItem(FORM_AUTOSAVE_KEY);
       if (savedDraft) {
@@ -307,6 +317,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       if (catalogs.unidades.length > 0) {
         setSelectedUnidadId(catalogs.defaultUnidadId || catalogs.unidades[0].id);
       }
+      setFolio("");
       setSelectedBancoId("");
       setSelectedBancoNombreId("");
       setBancoCuenta("");
@@ -670,13 +681,29 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       return;
     }
 
+    let submittedFolio = documentToEdit?.folio || "";
+    if (isEditingFinalized && finalize) {
+      submittedFolio = normalizeFolioInput(folio);
+      const folioMatch = submittedFolio.match(/^CLC-(\d+)\/(\d{4})$/);
+      const folioNumber = folioMatch ? Number.parseInt(folioMatch[1], 10) : 0;
+      const folioYear = folioMatch ? Number.parseInt(folioMatch[2], 10) : 0;
+      if (!folioMatch || folioNumber < 1) {
+        alert("Error: El folio debe tener el formato CLC-001/2026.");
+        return;
+      }
+      if (folioYear !== año) {
+        alert("Error: El anio del folio debe coincidir con el ejercicio presupuestal.");
+        return;
+      }
+    }
+
     const solObj = catalogs.firmas.find(f => f.id === selectedSolicitaId);
     const aut1Obj = catalogs.firmas.find(f => f.id === selectedAutoriza1Id);
     const aut2Obj = catalogs.firmas.find(f => f.id === selectedAutoriza2Id);
 
     const doc: CLCDocument = {
       id: documentToEdit?.id || "doc_" + Math.random().toString(36).substr(2, 9),
-      folio: documentToEdit?.folio || "", 
+      folio: submittedFolio, 
       año: año,
       unidadAdministrativaId: unidadeObj.id,
       unidadClave: unidadeObj.clave,
@@ -894,6 +921,20 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               </p>
             </div>
           </div>
+          {isEditingFinalized && (
+            <div className="space-y-1">
+              <label className="block text-[10px] font-black uppercase tracking-widest text-indigo-200">
+                Folio
+              </label>
+              <input
+                type="text"
+                value={folio}
+                onChange={event => setFolio(event.target.value.toUpperCase())}
+                onBlur={() => setFolio(normalizeFolioInput(folio))}
+                className="bg-white border border-indigo-200 rounded-xl px-4 py-2 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500/30 focus:outline-hidden shadow-sm min-w-40 font-mono"
+              />
+            </div>
+          )}
           <div className="space-y-1">
             <label className="block text-[10px] font-black uppercase tracking-widest text-indigo-200">
               Ejercicio presupuestal

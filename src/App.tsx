@@ -39,6 +39,34 @@ function getDocumentsFromPersistResult(result: { documents: CLCDocument[] } | CL
   return Array.isArray(result) ? result : result.documents;
 }
 
+function parseCLCFolio(folio: string): { number: number; year: number; normalized: string } | null {
+  const match = folio.trim().toUpperCase().match(/^CLC-(\d+)\/(\d{4})$/);
+  if (!match) return null;
+
+  const number = Number.parseInt(match[1], 10);
+  const year = Number.parseInt(match[2], 10);
+  if (!Number.isInteger(number) || number < 1 || !Number.isInteger(year)) return null;
+
+  return {
+    number,
+    year,
+    normalized: `CLC-${String(number).padStart(3, "0")}/${year}`
+  };
+}
+
+function getHighestFinalizedFolioNumber(documents: CLCDocument[], year: number) {
+  return documents
+    .filter(document => document["a\u00f1o"] === year && document.estado === "finalizado")
+    .reduce((max, document) => {
+      const parsed = parseCLCFolio(document.folio || "");
+      return parsed?.year === year ? Math.max(max, parsed.number) : max;
+    }, 0);
+}
+
+function getConfiguredLastFolioNumber(folioCounters: FolioCounter[], year: number) {
+  return folioCounters.find(counter => counter.anio === year)?.lastNumber || 0;
+}
+
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("lista");
   const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
@@ -222,19 +250,52 @@ export default function App() {
     const isEdit = Boolean(existingDoc);
 
     if (finalize && existingDoc?.estado === "finalizado") {
+      const parsedFolio = parseCLCFolio(doc.folio || "");
+      if (!parsedFolio) {
+        alert("El folio debe tener el formato CLC-001/2026.");
+        return;
+      }
+      if (parsedFolio.year !== doc["a\u00f1o"]) {
+        alert("El ejercicio del folio debe coincidir con el ejercicio presupuestal del registro.");
+        return;
+      }
+
+      const duplicatedFolioDoc = documents.find(d => (
+        d.id !== doc.id &&
+        d.estado === "finalizado" &&
+        (d.folio || "").trim().toUpperCase() === parsedFolio.normalized
+      ));
+      if (duplicatedFolioDoc) {
+        alert(`El folio ${parsedFolio.normalized} ya existe en otro registro.`);
+        return;
+      }
+
       const updatedFinalizedDoc: CLCDocument = {
         ...doc,
-        folio: existingDoc.folio,
+        folio: parsedFolio.normalized,
         estado: "finalizado",
         fechaCreacion: existingDoc.fechaCreacion
       };
 
       updatedDocs = updatedDocs.map(d => d.id === doc.id ? updatedFinalizedDoc : d);
       const persisted = await persistDocument(updatedFinalizedDoc, updatedDocs);
-      setDocuments(getDocumentsFromPersistResult(persisted));
+      const persistedDocuments = getDocumentsFromPersistResult(persisted);
       if (!Array.isArray(persisted)) {
         setCatalogs(persisted.catalogs);
         setFolioCounters(persisted.folioCounters);
+      }
+
+      const activeFolioCounters = Array.isArray(persisted) ? folioCounters : persisted.folioCounters;
+      const highestFolioAfterSave = getHighestFinalizedFolioNumber(persistedDocuments, parsedFolio.year);
+      const configuredLastFolio = getConfiguredLastFolioNumber(activeFolioCounters, parsedFolio.year);
+      if (highestFolioAfterSave > configuredLastFolio) {
+        const snapshot = await setNextFolioNumber(parsedFolio.year, highestFolioAfterSave + 1);
+        setCatalogs(snapshot.catalogs);
+        setDocuments(snapshot.documents);
+        setFolioCounters(snapshot.folioCounters);
+        setStorageMode(snapshot.storageMode);
+      } else {
+        setDocuments(persistedDocuments);
       }
 
       const logTime = new Date().toLocaleTimeString();
@@ -247,7 +308,6 @@ export default function App() {
         ...prev
       ]);
 
-      await downloadDocExcel(updatedFinalizedDoc, { openAfterSave: true });
       alert(`Expediente ${updatedFinalizedDoc.folio} actualizado correctamente.`);
     } else if (finalize) {
       const {
