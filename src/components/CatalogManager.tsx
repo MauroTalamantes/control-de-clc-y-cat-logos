@@ -13,7 +13,9 @@ import {
   BudgetSource, 
   BudgetProject, 
   ExpenseObject, 
-  Signature 
+  Signature,
+  CLCDocument,
+  FolioCounter
 } from "../types";
 import { Plus, Trash2, Edit2, Check, X, ShieldAlert, BookOpen, Layers } from "lucide-react";
 import { AlertTriangle, CheckCircle2, Database, RefreshCw, Save } from "lucide-react";
@@ -25,10 +27,15 @@ interface CatalogManagerProps {
   saveStatus: "idle" | "loading" | "saving" | "saved" | "error";
   saveError: string | null;
   onReload: () => void;
+  documents: CLCDocument[];
+  folioCounters: FolioCounter[];
+  onSetNextFolioNumber: (anio: number, nextNumber: number) => void | Promise<void>;
 }
 
-type ActiveTab = "unidades" | "bancos" | "proveedores" | "presupuesto" | "firmas";
+type ActiveTab = "unidades" | "bancos" | "proveedores" | "presupuesto" | "firmas" | "folios";
 type NewRecordId = "new_unidad" | "new_banco_nombre" | "new_banco" | "new_proveedor" | "new_firma" | "new_f" | "new_pr" | "new_o";
+
+const RequiredMark = () => <span className="text-red-600 font-black" aria-hidden="true">*</span>;
 
 export default function CatalogManager({
   catalogs,
@@ -36,9 +43,15 @@ export default function CatalogManager({
   storageMode,
   saveStatus,
   saveError,
-  onReload
+  onReload,
+  documents,
+  folioCounters,
+  onSetNextFolioNumber
 }: CatalogManagerProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("unidades");
+  const [folioYear, setFolioYear] = useState(new Date().getFullYear());
+  const [nextFolioNumber, setNextFolioNumberInput] = useState("");
+  const [isSavingFolio, setIsSavingFolio] = useState(false);
   
   // Local state for editing or adding items
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,6 +90,41 @@ export default function CatalogManager({
     error: { label: "Error", className: "bg-rose-50 text-rose-700 border-rose-100", icon: AlertTriangle }
   }[saveStatus];
   const StatusIcon = statusConfig.icon;
+  const highestExistingFolio = documents
+    .filter(document => document.año === folioYear && document.estado === "finalizado")
+    .reduce((max, document) => {
+      const match = document.folio.match(/CLC-(\d+)\/\d+/);
+      return Math.max(max, match ? Number.parseInt(match[1], 10) : 0);
+    }, 0);
+  const configuredLastFolio = folioCounters.find(counter => counter.anio === folioYear)?.lastNumber || 0;
+  const suggestedNextFolio = Math.max(highestExistingFolio, configuredLastFolio) + 1;
+
+  const saveNextFolioNumber = async () => {
+    const nextNumber = nextFolioNumber.trim() ? Number(nextFolioNumber) : suggestedNextFolio;
+    if (!Number.isInteger(nextNumber) || nextNumber < 1) {
+      alert("El siguiente número de folio debe ser un entero mayor que cero.");
+      return;
+    }
+    if (nextNumber <= highestExistingFolio) {
+      alert(`El siguiente folio debe ser mayor que CLC-${String(highestExistingFolio).padStart(3, "0")}/${folioYear} para evitar duplicados.`);
+      return;
+    }
+
+    if (!confirm(`¿Estás seguro de que quieres modificar el próximo folio del ejercicio ${folioYear}?`)) return;
+    if (!confirm(`Las próximas CLC comenzarán en CLC-${String(nextNumber).padStart(3, "0")}/${folioYear}. ¿Deseas continuar?`)) return;
+
+    setIsSavingFolio(true);
+    try {
+      await onSetNextFolioNumber(folioYear, nextNumber);
+      setNextFolioNumberInput("");
+      alert(`El próximo folio quedó definido como CLC-${String(nextNumber).padStart(3, "0")}/${folioYear}.`);
+    } catch (error) {
+      console.error("Error updating folio counter", error);
+      alert(error instanceof Error ? error.message : "No se pudo modificar el próximo folio.");
+    } finally {
+      setIsSavingFolio(false);
+    }
+  };
 
   const startAddUnit = () => {
     setEditingId("new_unidad");
@@ -175,7 +223,7 @@ export default function CatalogManager({
     setBancoForm({ ...b });
   };
   const saveBanco = () => {
-    if (!bancoForm.nombre || !bancoForm.cuenta) return;
+    if (!bancoForm.nombre || !bancoForm.cuenta || !bancoForm.clabe) return;
     let list = [...catalogs.bancos];
     
     // Check duplicate CLABE
@@ -456,6 +504,17 @@ export default function CatalogManager({
         >
           Firmantes y Puestos
         </button>
+        <button
+          id="tab-folios"
+          onClick={() => { setActiveTab("folios"); setEditingId(null); }}
+          className={`px-5 py-3.5 text-xs font-semibold border-b-2 transition-all cursor-pointer ${
+            activeTab === "folios"
+              ? "border-indigo-600 text-indigo-700 bg-indigo-50/10"
+              : "border-transparent text-gray-500 hover:text-gray-800 hover:bg-gray-100/30"
+          }`}
+        >
+          Configuración de Folios
+        </button>
       </div>
 
       <div className="p-6">
@@ -648,7 +707,7 @@ export default function CatalogManager({
                 <h3 className="text-xs font-semibold text-blue-800">Agregar Información Bancaria</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Banco *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Banco <RequiredMark /></label>
                     <select
                       value={bancoForm.nombre || ""}
                       onChange={e => setBancoForm({ ...bancoForm, nombre: e.target.value })}
@@ -660,7 +719,7 @@ export default function CatalogManager({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Número de Cuenta *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Número de Cuenta <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: 65509270940"
@@ -670,7 +729,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clabe Interbancaria</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clabe Interbancaria <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: 01493065509270940"
@@ -784,7 +843,7 @@ export default function CatalogManager({
                 <h3 className="text-xs font-semibold text-teal-800">Agregar Proveedor</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre o Razón Social *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre o Razón Social <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: MULTISERVICIO LA PLATA S.A. DE C.V."
@@ -794,7 +853,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">R.F.C *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">R.F.C <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: MPL020607CX5"
@@ -1099,7 +1158,7 @@ export default function CatalogManager({
                 <h3 className="text-xs font-semibold text-violet-800">Cargar Firmante Autorizado</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Completo *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Completo <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: L.C. JESÚS RODRÍGUEZ DEL MURO"
@@ -1109,7 +1168,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Puesto o Cargo *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Puesto o Cargo <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: SECRETARIO DE LA TESORERÍA Y FINANZAS"
@@ -1222,6 +1281,86 @@ export default function CatalogManager({
             </div>
           </div>
         )}
+
+        {activeTab === "folios" && (
+          <div id="panel-folios" className="space-y-5">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+              <ShieldAlert className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-900 space-y-1">
+                <p className="font-bold">Configuración manual de la numeración CLC</p>
+                <p>Usa esta opción solo cuando necesites definir desde qué número continuará un ejercicio. El sistema nunca permite reutilizar un folio ya asignado.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Último folio asignado</span>
+                <strong className="block mt-2 text-lg font-black font-mono text-slate-900">
+                  {highestExistingFolio > 0
+                    ? `CLC-${String(highestExistingFolio).padStart(3, "0")}/${folioYear}`
+                    : `Sin folios en ${folioYear}`}
+                </strong>
+              </div>
+
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-indigo-500">Próximo folio configurado</span>
+                <strong className="block mt-2 text-lg font-black font-mono text-indigo-950">
+                  CLC-{String(suggestedNextFolio).padStart(3, "0")}/{folioYear}
+                </strong>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Almacenamiento activo</span>
+                <strong className="block mt-2 text-sm font-black text-slate-800">{storageLabel}</strong>
+                <span className="block mt-1 text-[11px] text-slate-500">{storageDescription}</span>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-850">Definir el próximo folio</h3>
+                <p className="text-[11px] text-slate-500 mt-1">El contador se actualiza automáticamente cada vez que se finaliza una CLC.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Ejercicio</label>
+                  <input
+                    type="number"
+                    min="2000"
+                    max="9999"
+                    value={folioYear}
+                    onChange={event => {
+                      setFolioYear(Number(event.target.value));
+                      setNextFolioNumberInput("");
+                    }}
+                    className="w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-800 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Número del próximo folio</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder={String(suggestedNextFolio)}
+                    value={nextFolioNumber}
+                    onChange={event => setNextFolioNumberInput(event.target.value)}
+                    className="w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-800 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={saveNextFolioNumber}
+                  disabled={isSavingFolio}
+                  className="rounded-lg bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSavingFolio ? "Guardando..." : "Modificar próximo folio"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {isNewRecord(editingId) && (
@@ -1248,7 +1387,7 @@ export default function CatalogManager({
               {editingId === "new_unidad" && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave de Unidad *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave de Unidad <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: 530"
@@ -1258,7 +1397,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Completo *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Completo <RequiredMark /></label>
                     <input
                       type="text"
                       value={unidadForm.nombre || ""}
@@ -1271,7 +1410,7 @@ export default function CatalogManager({
 
               {editingId === "new_banco_nombre" && (
                 <div>
-                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre del Banco *</label>
+                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre del Banco <RequiredMark /></label>
                   <input
                     type="text"
                     placeholder="Ej: SANTANDER"
@@ -1285,7 +1424,7 @@ export default function CatalogManager({
               {editingId === "new_banco" && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Banco *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Banco <RequiredMark /></label>
                     <select
                       value={bancoForm.nombre || ""}
                       onChange={e => setBancoForm({ ...bancoForm, nombre: e.target.value })}
@@ -1297,7 +1436,7 @@ export default function CatalogManager({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Numero de Cuenta *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Numero de Cuenta <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: 65509270940"
@@ -1307,7 +1446,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clabe Interbancaria</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clabe Interbancaria <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: 01493065509270940"
@@ -1322,7 +1461,7 @@ export default function CatalogManager({
               {editingId === "new_proveedor" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre o Razon Social *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre o Razon Social <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: MULTISERVICIO LA PLATA S.A. DE C.V."
@@ -1332,7 +1471,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">R.F.C *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">R.F.C <RequiredMark /></label>
                     <input
                       type="text"
                       placeholder="Ej: MPL020607CX5"
@@ -1347,7 +1486,7 @@ export default function CatalogManager({
               {editingId === "new_firma" && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Completo *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Completo <RequiredMark /></label>
                     <input
                       type="text"
                       value={firmaForm.nombre || ""}
@@ -1356,7 +1495,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Puesto o Cargo *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Puesto o Cargo <RequiredMark /></label>
                     <input
                       type="text"
                       value={firmaForm.puesto || ""}
@@ -1383,7 +1522,7 @@ export default function CatalogManager({
               {editingId === "new_f" && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave <RequiredMark /></label>
                     <input
                       placeholder="Ej: 111"
                       value={fuenteForm.clave || ""}
@@ -1392,7 +1531,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Descripcion *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Descripcion <RequiredMark /></label>
                     <input
                       value={fuenteForm.descripcion || ""}
                       onChange={e => setFuenteForm({ ...fuenteForm, descripcion: e.target.value.toUpperCase() })}
@@ -1405,7 +1544,7 @@ export default function CatalogManager({
               {editingId === "new_pr" && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave <RequiredMark /></label>
                     <input
                       placeholder="Ej: 304004"
                       value={proyectoForm.clave || ""}
@@ -1414,7 +1553,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Descripcion *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Descripcion <RequiredMark /></label>
                     <input
                       value={proyectoForm.descripcion || ""}
                       onChange={e => setProyectoForm({ ...proyectoForm, descripcion: e.target.value.toUpperCase() })}
@@ -1427,7 +1566,7 @@ export default function CatalogManager({
               {editingId === "new_o" && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Clave <RequiredMark /></label>
                     <input
                       placeholder="Ej: 2611"
                       value={objetoForm.clave || ""}
@@ -1436,7 +1575,7 @@ export default function CatalogManager({
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre *</label>
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre <RequiredMark /></label>
                     <input
                       value={objetoForm.nombre || ""}
                       onChange={e => setObjetoForm({ ...objetoForm, nombre: e.target.value.toUpperCase() })}

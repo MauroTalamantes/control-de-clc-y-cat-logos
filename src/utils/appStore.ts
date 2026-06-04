@@ -1,12 +1,15 @@
-import { AppCatalogs, CLCDocument } from "../types";
+import { AppCatalogs, CLCDocument, FolioCounter } from "../types";
 import {
   INITIAL_CATALOGS,
   INITIAL_DOCUMENTS,
   finalizeDocumentAndAssignFolio,
   getStoredCatalogs,
   getStoredDocuments,
+  getStoredFolioCounters,
   saveStoredCatalogs,
-  saveStoredDocuments
+  saveStoredDocuments,
+  saveStoredFolioCounters,
+  setStoredNextFolioNumber
 } from "./initialData";
 import {
   deleteSupabaseDocument,
@@ -14,12 +17,14 @@ import {
   isSupabaseConfigured,
   loadSupabaseAppData,
   saveSupabaseCatalogs,
-  saveSupabaseDocument
+  saveSupabaseDocument,
+  setSupabaseNextFolioNumber
 } from "./supabaseStore";
 
 export interface AppDataSnapshot {
   catalogs: AppCatalogs;
   documents: CLCDocument[];
+  folioCounters: FolioCounter[];
   dataFilePath?: string;
   storageMode: "supabase" | "electron" | "browser";
 }
@@ -36,6 +41,7 @@ export async function loadAppData(): Promise<AppDataSnapshot> {
     return {
       catalogs: store.catalogs || INITIAL_CATALOGS,
       documents: store.documents.length ? store.documents : INITIAL_DOCUMENTS,
+      folioCounters: store.folioCounters || [],
       dataFilePath: store.dataFilePath,
       storageMode: "electron"
     };
@@ -44,6 +50,7 @@ export async function loadAppData(): Promise<AppDataSnapshot> {
   return {
     catalogs: getStoredCatalogs(),
     documents: getStoredDocuments(),
+    folioCounters: getStoredFolioCounters(),
     storageMode: "browser"
   };
 }
@@ -97,7 +104,7 @@ export async function deletePersistedDocument(
 export async function finalizeAndPersistDocument(
   doc: CLCDocument,
   currentDocuments: CLCDocument[]
-): Promise<{ finalizedDoc: CLCDocument; documents: CLCDocument[] }> {
+): Promise<{ finalizedDoc: CLCDocument; documents: CLCDocument[]; folioCounters: FolioCounter[] }> {
   if (isSupabaseConfigured()) {
     return finalizeSupabaseDocument(doc);
   }
@@ -107,10 +114,47 @@ export async function finalizeAndPersistDocument(
   }
 
   const latestDocuments = getStoredDocuments();
-  const { finalizedDoc, updatedGlobalList } = finalizeDocumentAndAssignFolio(
+  const { finalizedDoc, updatedGlobalList, folioCounters } = finalizeDocumentAndAssignFolio(
     doc,
-    latestDocuments.length ? latestDocuments : currentDocuments
+    latestDocuments.length ? latestDocuments : currentDocuments,
+    getStoredFolioCounters()
   );
   saveStoredDocuments(updatedGlobalList);
-  return { finalizedDoc, documents: updatedGlobalList };
+  saveStoredFolioCounters(folioCounters);
+  return { finalizedDoc, documents: updatedGlobalList, folioCounters };
+}
+
+export async function setNextFolioNumber(anio: number, nextNumber: number): Promise<AppDataSnapshot> {
+  if (isSupabaseConfigured()) {
+    return setSupabaseNextFolioNumber(anio, nextNumber);
+  }
+
+  if (isElectronStoreAvailable() && window.clcStore) {
+    const store = await window.clcStore.setNextFolioNumber(anio, nextNumber);
+    return {
+      catalogs: store.catalogs || INITIAL_CATALOGS,
+      documents: store.documents.length ? store.documents : INITIAL_DOCUMENTS,
+      folioCounters: store.folioCounters || [],
+      dataFilePath: store.dataFilePath,
+      storageMode: "electron"
+    };
+  }
+
+  const documents = getStoredDocuments();
+  const highestExisting = documents
+    .filter(document => document.año === anio && document.estado === "finalizado")
+    .reduce((max, document) => {
+      const match = document.folio.match(/CLC-(\d+)\/\d+/);
+      return Math.max(max, match ? Number.parseInt(match[1], 10) : 0);
+    }, 0);
+  if (nextNumber <= highestExisting) {
+    throw new Error(`El siguiente folio debe ser mayor que CLC-${String(highestExisting).padStart(3, "0")}/${anio}.`);
+  }
+
+  return {
+    catalogs: getStoredCatalogs(),
+    documents,
+    folioCounters: setStoredNextFolioNumber(anio, nextNumber),
+    storageMode: "browser"
+  };
 }

@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
 import { CLCDocument } from "../types";
 import { downloadDocExcel } from "../utils/excelGenerator";
-import { downloadDocPDF } from "../utils/pdfGenerator";
+import { createDocPDFPreviewUrl, downloadDocPDF, printDocPDF } from "../utils/pdfGenerator";
 import { 
   FileSpreadsheet, // Added for download selected button
   FileText, 
@@ -24,7 +24,7 @@ interface CLCViewerProps {
   onDelete: (id: string) => void;
 }
 
-type SortKey = "folio" | "nombre" | "concepto" | "proveedor";
+type SortKey = "fecha" | "folio" | "nombre" | "concepto" | "proveedor";
 type SortDirection = "asc" | "desc";
 type TooltipState = { text: string; left: number; top: number } | null;
 
@@ -39,12 +39,15 @@ export default function CLCViewer({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("folio");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sortKey, setSortKey] = useState<SortKey>("fecha");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [activeTooltip, setActiveTooltip] = useState<TooltipState>(null);
   const [previewMode, setPreviewMode] = useState<"formato" | "datos">("formato");
+  const [officialPreviewUrl, setOfficialPreviewUrl] = useState<string | null>(null);
+  const [officialPreviewStatus, setOfficialPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [officialPreviewError, setOfficialPreviewError] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const dateFilterRef = useRef<HTMLDivElement>(null);
 
@@ -79,6 +82,11 @@ export default function CLCViewer({
       left: rect.left + rect.width / 2,
       top: rect.top - 8
     });
+  };
+
+  const showTooltipIfTruncated = (event: MouseEvent<HTMLElement>, text: string) => {
+    if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
+    showTooltip(event, text);
   };
 
   useEffect(() => {
@@ -127,6 +135,7 @@ export default function CLCViewer({
 
   const sortedDocs = [...filteredDocs].sort((a, b) => {
     const values: Record<SortKey, [string, string]> = {
+      fecha: [a.fechaCreacion || "", b.fechaCreacion || ""],
       folio: [a.folio || "BORRADOR", b.folio || "BORRADOR"],
       nombre: [a.unidadNombre, b.unidadNombre],
       concepto: [getConceptName(a), getConceptName(b)],
@@ -154,8 +163,10 @@ const handleDownloadSelectedExcel = async () => {
   setSelectedDocumentIds([]);
 };
 
-const handleDownloadSelectedPDF = () => {
-  selectedDocs.forEach(doc => downloadDocPDF(doc));
+const handleDownloadSelectedPDF = async () => {
+  for (const doc of selectedDocs) {
+    await downloadDocPDF(doc);
+  }
   setSelectedDocumentIds([]);
 };
 
@@ -164,6 +175,44 @@ const handleDownloadSelectedPDF = () => {
 
   const getDocById = (id: string) => documents.find(d => d.id === id);
   const selectedDoc = selectedDocId ? getDocById(selectedDocId) : null;
+  const selectedDocPreviewKey = useMemo(() => selectedDoc ? JSON.stringify(selectedDoc) : "", [selectedDoc]);
+
+  useEffect(() => {
+    if (!selectedDoc || previewMode !== "formato") {
+      setOfficialPreviewStatus("idle");
+      setOfficialPreviewError(null);
+      setOfficialPreviewUrl(null);
+      return;
+    }
+
+    let isActive = true;
+    let nextUrl: string | null = null;
+    setOfficialPreviewStatus("loading");
+    setOfficialPreviewError(null);
+    setOfficialPreviewUrl(null);
+
+    createDocPDFPreviewUrl(selectedDoc)
+      .then(url => {
+        nextUrl = url;
+        if (!isActive) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setOfficialPreviewUrl(url);
+        setOfficialPreviewStatus("ready");
+      })
+      .catch(error => {
+        if (!isActive) return;
+        console.error("Error loading official format preview", error);
+        setOfficialPreviewError(error instanceof Error ? error.message : "No se pudo cargar la vista oficial.");
+        setOfficialPreviewStatus("error");
+      });
+
+    return () => {
+      isActive = false;
+      if (nextUrl) URL.revokeObjectURL(nextUrl);
+    };
+  }, [selectedDocPreviewKey, previewMode]);
 
   return (
     <div className="space-y-6" id="clc-lists-viewer">
@@ -387,9 +436,13 @@ const handleDownloadSelectedPDF = () => {
                       </td>
 
                       {/* Unidad Administrativa */}
-                      <td className="p-3 align-top overflow-hidden">
-                        <div className="w-full min-w-0 space-y-1">
-                          <strong className="text-slate-800 font-bold block w-full truncate" title={doc.unidadNombre}>
+                      <td className="p-3 align-middle overflow-hidden">
+                        <div className="flex min-h-8 w-full min-w-0 items-center justify-center">
+                          <strong
+                            className="text-slate-800 font-bold block w-full truncate text-center"
+                            onMouseEnter={event => showTooltipIfTruncated(event, doc.unidadNombre)}
+                            onMouseLeave={() => setActiveTooltip(null)}
+                          >
                             {doc.unidadNombre}
                           </strong>
                         </div>
@@ -557,18 +610,18 @@ const handleDownloadSelectedPDF = () => {
       {selectedDoc && (
         <div
           id="print-preview-modal-backdrop"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto bg-slate-900/60 backdrop-blur-xs transition-all"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-hidden bg-slate-900/60 backdrop-blur-xs transition-all"
           onClick={() => setSelectedDocId(null)}
         >
           
           {/* Modal Container */}
           <div
-            className="relative bg-slate-100 rounded-2xl shadow-2xl border border-slate-300 max-w-5xl w-full max-h-[92vh] overflow-y-auto flex flex-col z-10 animate-in fade-in zoom-in-95 duration-250"
+            className="relative bg-slate-100 rounded-2xl shadow-2xl border border-slate-300 max-w-[96vw] w-full h-[94vh] overflow-hidden flex flex-col z-10 animate-in fade-in zoom-in-95 duration-250"
             onClick={e => e.stopPropagation()}
           >
             
-            {/* Sticky Action Header */}
-            <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 z-30 shadow-3xs">
+            {/* Action Header */}
+            <div className="shrink-0 bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 z-30 shadow-3xs">
               <div>
                 <span className="text-[9px] font-black uppercase text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full select-none">
                   Vista Previa Oficial Sincronizada
@@ -613,36 +666,54 @@ const handleDownloadSelectedPDF = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => downloadDocPDF(selectedDoc)}
-                  className="bg-red-650 hover:bg-red-750 text-white text-xs font-extrabold px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-3xs hover:-translate-y-0.5 pointer-events-auto cursor-pointer"
-                  title="Descargar archivo PDF homologado"
-                >
-                  <FileText className="h-4 w-4" /> Exportar PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
+                  onClick={() => printDocPDF(selectedDoc)}
                   className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-3xs hover:-translate-y-0.5 cursor-pointer"
-                  title="Imprimir documento directament"
+                  title="Imprimir el PDF generado desde el formato oficial"
                 >
                   <Printer className="h-4 w-4" /> Imprimir Formato
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedDocId(null)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-250 font-bold text-xs px-3.5 py-2 rounded-lg transition-all cursor-pointer"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-250 p-2 rounded-lg transition-all cursor-pointer"
+                  title="Cerrar vista"
+                  aria-label="Cerrar vista"
                 >
-                  <span className="flex items-center gap-1">
-                    <X className="h-4 w-4" /> Cerrar Vista
-                  </span>
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
 
-            {/* Modal Body: Displays the actual simulated print layout sheet */}
-            <div className="p-8 flex justify-center bg-slate-100/60 overflow-y-auto">
+            {/* Modal Body */}
+            <div className="flex-1 min-h-0 bg-slate-100/60 overflow-y-auto">
               {previewMode === "formato" ? (
-              <div className="bg-white p-8 border border-gray-300 rounded-lg flex flex-col space-y-4 shadow-md w-[850px] font-sans text-gray-800 select-text">
+              <>
+              <div className="h-full w-full p-4">
+                {officialPreviewStatus === "loading" && (
+                  <div className="h-full min-h-80 rounded-xl border border-slate-200 bg-white flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="mx-auto h-2 w-32 animate-pulse rounded-full bg-slate-200" />
+                      <p className="mt-3 text-xs font-semibold text-slate-500">Generando vista desde FORMATO.xlsx...</p>
+                    </div>
+                  </div>
+                )}
+                {officialPreviewStatus === "error" && (
+                  <div className="h-full min-h-80 rounded-xl border border-rose-200 bg-rose-50 flex items-center justify-center p-6 text-center">
+                    <div>
+                      <p className="text-sm font-bold text-rose-800">No se pudo cargar la vista oficial.</p>
+                      <p className="mt-1 text-xs text-rose-700">{officialPreviewError}</p>
+                    </div>
+                  </div>
+                )}
+                {officialPreviewStatus === "ready" && officialPreviewUrl && (
+                  <iframe
+                    title={`Formato oficial ${selectedDoc.folio || "borrador"}`}
+                    src={officialPreviewUrl}
+                    className="h-full min-h-80 w-full rounded-xl border border-slate-300 bg-white shadow-sm"
+                  />
+                )}
+              </div>
+              <div className="hidden bg-white p-8 border border-gray-300 rounded-lg flex-col space-y-4 shadow-md w-[850px] font-sans text-gray-800 select-text">
                 
                 {/* Header Box */}
                 <div className="grid grid-cols-12 border border-gray-300 text-center items-center select-none">
@@ -824,8 +895,9 @@ const handleDownloadSelectedPDF = () => {
                 </div>
 
               </div>
+              </>
               ) : (
-                <div className="bg-white border border-gray-200 rounded-xl shadow-md w-full max-w-4xl font-sans text-slate-800 select-text overflow-hidden">
+                <div className="w-full min-h-full font-sans text-slate-800 select-text">
                   <div className="px-6 py-5 border-b border-slate-100 bg-[#f9fafb]">
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                       <div>
@@ -948,6 +1020,3 @@ const handleDownloadSelectedPDF = () => {
     </div>
   );
 }
-
-
-

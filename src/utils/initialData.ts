@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AppCatalogs, CLCDocument } from "../types";
+import { AppCatalogs, CLCDocument, FolioCounter } from "../types";
+
+const FOLIO_COUNTERS_STORAGE_KEY = "clc_folio_counters";
 
 export const INITIAL_CATALOGS: AppCatalogs = {
   defaultUnidadId: "u1",
@@ -265,27 +267,56 @@ export function saveStoredDocuments(documents: CLCDocument[]) {
   localStorage.setItem("clc_documents", JSON.stringify(documents));
 }
 
+export function getStoredFolioCounters(): FolioCounter[] {
+  const data = localStorage.getItem(FOLIO_COUNTERS_STORAGE_KEY);
+  if (!data) return [];
+
+  try {
+    const parsed = JSON.parse(data) as FolioCounter[];
+    return Array.isArray(parsed)
+      ? parsed.filter(counter => Number.isInteger(counter.anio) && Number.isInteger(counter.lastNumber))
+      : [];
+  } catch (e) {
+    console.error("Error parsing folio counters from localStorage, resetting", e);
+    return [];
+  }
+}
+
+export function saveStoredFolioCounters(counters: FolioCounter[]) {
+  localStorage.setItem(FOLIO_COUNTERS_STORAGE_KEY, JSON.stringify(counters));
+}
+
+export function setStoredNextFolioNumber(anio: number, nextNumber: number): FolioCounter[] {
+  const counters = getStoredFolioCounters();
+  const nextCounters = counters.filter(counter => counter.anio !== anio);
+  nextCounters.push({ anio, lastNumber: nextNumber - 1 });
+  nextCounters.sort((a, b) => b.anio - a.anio);
+  saveStoredFolioCounters(nextCounters);
+  return nextCounters;
+}
+
 /**
  * Assigns the next sequential folio for the given document and year.
  * Performs a safe increment step by querying the latest committed documents to prevent race conditions or gaps.
  */
-export function finalizeDocumentAndAssignFolio(docToFinalize: CLCDocument, allDocuments: CLCDocument[]): { finalizedDoc: CLCDocument, updatedGlobalList: CLCDocument[] } {
+export function finalizeDocumentAndAssignFolio(
+  docToFinalize: CLCDocument,
+  allDocuments: CLCDocument[],
+  folioCounters: FolioCounter[] = []
+): { finalizedDoc: CLCDocument, updatedGlobalList: CLCDocument[], folioCounters: FolioCounter[] } {
   const year = docToFinalize.año || new Date().getFullYear();
   
   // Filter final documents of same year to count and find highest
   const yearDocs = allDocuments.filter(d => d.año === year && d.estado === "finalizado");
   
-  let nextNum = 1;
-  if (yearDocs.length > 0) {
-    // Extract folio numbers
-    const folioNumbers = yearDocs.map(d => {
-      // Format is e.g. "CLC-007/2026"
-      const match = d.folio.match(/CLC-(\d+)\/\d+/);
-      return match ? parseInt(match[1], 10) : 0;
-    });
-    const maxNumber = Math.max(...folioNumbers, 0);
-    nextNum = maxNumber + 1;
-  }
+  const folioNumbers = yearDocs.map(d => {
+    // Format is e.g. "CLC-007/2026"
+    const match = d.folio.match(/CLC-(\d+)\/\d+/);
+    return match ? parseInt(match[1], 10) : 0;
+  });
+  const maxNumber = Math.max(...folioNumbers, 0);
+  const configuredLastNumber = folioCounters.find(counter => counter.anio === year)?.lastNumber || 0;
+  const nextNum = Math.max(maxNumber, configuredLastNumber) + 1;
   
   // Format to 3 digits e.g. CLC-007/2026
   const paddedNum = String(nextNum).padStart(3, "0");
@@ -307,5 +338,9 @@ export function finalizeDocumentAndAssignFolio(docToFinalize: CLCDocument, allDo
     updatedGlobalList.push(finalizedDoc);
   }
   
-  return { finalizedDoc, updatedGlobalList };
+  const nextCounters = folioCounters.filter(counter => counter.anio !== year);
+  nextCounters.push({ anio: year, lastNumber: nextNum });
+  nextCounters.sort((a, b) => b.anio - a.anio);
+
+  return { finalizedDoc, updatedGlobalList, folioCounters: nextCounters };
 }

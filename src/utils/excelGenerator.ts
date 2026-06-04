@@ -37,13 +37,13 @@ function serializeXml(doc: XMLDocument) {
 
 function childElements(parent: Element, localName: string) {
   return Array.from(parent.childNodes).filter(
-    (node): node is Element => node.nodeType === Node.ELEMENT_NODE && node.localName === localName
+    (node): node is Element => node.nodeType === Node.ELEMENT_NODE && (node as Element).localName === localName
   );
 }
 
 function findFirstElement(parent: ParentNode, localName: string) {
   return Array.from(parent.childNodes).find(
-    (node): node is Element => node.nodeType === Node.ELEMENT_NODE && node.localName === localName
+    (node): node is Element => node.nodeType === Node.ELEMENT_NODE && (node as Element).localName === localName
   );
 }
 
@@ -478,13 +478,17 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   return zipSync(zip, { level: 6 });
 }
 
-export async function downloadDocExcel(doc: CLCDocument) {
+export function getDocExportBaseName(doc: CLCDocument) {
+  return `${doc.folio || "CLC_Borrador"}_${doc.proveedorNombre.replace(/\s+/g, "_")}`;
+}
+
+export async function downloadDocExcel(doc: CLCDocument, options: { openAfterSave?: boolean } = {}) {
   try {
     const buffer = await generateExcelBuffer(doc);
-    const fileName = `${doc.folio || "CLC_Borrador"}_${doc.proveedorNombre.replace(/\s+/g, "_")}.xlsx`;
+    const fileName = `${getDocExportBaseName(doc)}.xlsx`;
 
     if (window.clcFile) {
-      await window.clcFile.saveExcel(fileName, buffer);
+      await window.clcFile.saveExcel(fileName, buffer, options);
       return;
     }
 

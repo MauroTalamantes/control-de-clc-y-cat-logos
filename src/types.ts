@@ -53,6 +53,11 @@ export interface Signature {
   puesto: string; // e.g. "SECRETARIO DE SERVICIOS PUBLICOS MUNICIPALES"
 }
 
+export interface FolioCounter {
+  anio: number;
+  lastNumber: number;
+}
+
 export interface CLCItem {
   id: string;
   oc: string; // Orden de Compra

@@ -4,15 +4,17 @@
  */
 
 import { useState, useEffect } from "react";
-import { AppCatalogs, CLCDocument } from "./types";
+import { AppCatalogs, CLCDocument, FolioCounter } from "./types";
 import { INITIAL_CATALOGS, INITIAL_DOCUMENTS } from "./utils/initialData";
 import {
   deletePersistedDocument,
   finalizeAndPersistDocument,
   loadAppData,
   persistDocument,
-  persistCatalogs
+  persistCatalogs,
+  setNextFolioNumber
 } from "./utils/appStore";
+import { downloadDocExcel } from "./utils/excelGenerator";
 import CatalogManager from "./components/CatalogManager";
 import CLCForm from "./components/CLCForm";
 import CLCViewer from "./components/CLCViewer";
@@ -41,6 +43,7 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("lista");
   const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
   const [documents, setDocuments] = useState<CLCDocument[]>([]);
+  const [folioCounters, setFolioCounters] = useState<FolioCounter[]>([]);
   const [isInitialDataLoading, setIsInitialDataLoading] = useState(true);
   const [editingDoc, setEditingDoc] = useState<CLCDocument | null>(null);
   const [storageMode, setStorageMode] = useState<StorageMode>("browser");
@@ -69,6 +72,7 @@ export default function App() {
         if (!isMounted) return;
         setCatalogs(snapshot.catalogs);
         setDocuments(snapshot.documents);
+        setFolioCounters(snapshot.folioCounters);
         setStorageMode(snapshot.storageMode);
         setCatalogSyncStatus("idle");
         setCatalogSyncError(null);
@@ -115,6 +119,36 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (storageMode !== "supabase" || isInitialDataLoading) return;
+
+    let isMounted = true;
+    let isRefreshing = false;
+
+    const refreshSnapshot = async () => {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      try {
+        const snapshot = await loadAppData();
+        if (!isMounted) return;
+        setDocuments(snapshot.documents);
+        setFolioCounters(snapshot.folioCounters);
+      } catch (error) {
+        console.error("Error refreshing Supabase app data", error);
+      } finally {
+        isRefreshing = false;
+      }
+    };
+
+    const intervalId = window.setInterval(refreshSnapshot, 3000);
+    window.addEventListener("focus", refreshSnapshot);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshSnapshot);
+    };
+  }, [storageMode, isInitialDataLoading]);
+
   const persistCatalogChanges = async (
     updated: AppCatalogs,
     options: { rethrow?: boolean; showAlert?: boolean } = {}
@@ -129,6 +163,7 @@ export default function App() {
       if (result) {
         setCatalogs(result.catalogs);
         setDocuments(result.documents);
+        setFolioCounters(result.folioCounters);
         setStorageMode(result.storageMode);
         setCatalogSyncStatus("saved");
         return result.catalogs;
@@ -161,6 +196,7 @@ export default function App() {
       const snapshot = await loadAppData();
       setCatalogs(snapshot.catalogs);
       setDocuments(snapshot.documents);
+      setFolioCounters(snapshot.folioCounters);
       setStorageMode(snapshot.storageMode);
       setCatalogSyncStatus("idle");
       setSimulationLog(prev => [
@@ -196,6 +232,10 @@ export default function App() {
       updatedDocs = updatedDocs.map(d => d.id === doc.id ? updatedFinalizedDoc : d);
       const persisted = await persistDocument(updatedFinalizedDoc, updatedDocs);
       setDocuments(getDocumentsFromPersistResult(persisted));
+      if (!Array.isArray(persisted)) {
+        setCatalogs(persisted.catalogs);
+        setFolioCounters(persisted.folioCounters);
+      }
 
       const logTime = new Date().toLocaleTimeString();
       setSimulationLog(prev => [
@@ -207,11 +247,17 @@ export default function App() {
         ...prev
       ]);
 
+      await downloadDocExcel(updatedFinalizedDoc, { openAfterSave: true });
       alert(`Expediente ${updatedFinalizedDoc.folio} actualizado correctamente.`);
     } else if (finalize) {
-      const { finalizedDoc, documents: persistedDocs } = await finalizeAndPersistDocument(doc, documents);
+      const {
+        finalizedDoc,
+        documents: persistedDocs,
+        folioCounters: persistedFolioCounters
+      } = await finalizeAndPersistDocument(doc, documents);
       
       setDocuments(persistedDocs);
+      setFolioCounters(persistedFolioCounters);
       
       // Update logs
       const logTime = new Date().toLocaleTimeString();
@@ -224,6 +270,7 @@ export default function App() {
         ...prev
       ]);
       
+      await downloadDocExcel(finalizedDoc, { openAfterSave: true });
       alert(`Expediente Finalizado con Éxito.\nFolio del Ejercicio Asignado: ${finalizedDoc.folio}`);
     } else {
       // Just save as draft
@@ -257,6 +304,14 @@ export default function App() {
 
     setEditingDoc(null);
     setViewMode("lista");
+  };
+
+  const handleSetNextFolioNumber = async (anio: number, nextNumber: number) => {
+    const snapshot = await setNextFolioNumber(anio, nextNumber);
+    setCatalogs(snapshot.catalogs);
+    setDocuments(snapshot.documents);
+    setFolioCounters(snapshot.folioCounters);
+    setStorageMode(snapshot.storageMode);
   };
 
   // Concurrency Simulation Callback
@@ -460,6 +515,9 @@ export default function App() {
             saveStatus={catalogSyncStatus}
             saveError={catalogSyncError}
             onReload={handleReloadCatalogs}
+            documents={documents}
+            folioCounters={folioCounters}
+            onSetNextFolioNumber={handleSetNextFolioNumber}
           />
         )}
 

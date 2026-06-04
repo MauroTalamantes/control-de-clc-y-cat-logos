@@ -28,6 +28,7 @@ interface SavedCLCFormDraft {
   anio: number;
   selectedUnidadId: string;
   selectedBancoId: string;
+  selectedBancoNombreId?: string;
   bancoCuenta: string;
   bancoClabe: string;
   selectedProveedorId: string;
@@ -49,11 +50,23 @@ interface BudgetPickerOption {
   searchText: string;
 }
 
+type BudgetPickerType = "fuente" | "proyecto" | "objeto";
+type CurrencyField = "subTotal" | "descuento" | "iva" | "isr";
+interface BudgetRecordDraft {
+  pickerType: BudgetPickerType;
+  itemId: string;
+  clave: string;
+  description: string;
+}
+
+const RequiredMark = () => <span className="text-red-600 font-black" aria-hidden="true">*</span>;
+
 export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, documentToEdit }: CLCFormProps) {
   // Setup standard state
   const [año, setAño] = useState<number>(2026);
   const [selectedUnidadId, setSelectedUnidadId] = useState<string>("");
   const [selectedBancoId, setSelectedBancoId] = useState<string>("");
+  const [selectedBancoNombreId, setSelectedBancoNombreId] = useState<string>("");
   const [bancoCuenta, setBancoCuenta] = useState<string>("");
   const [bancoClabe, setBancoClabe] = useState<string>("");
   
@@ -71,25 +84,37 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const [selectedAutoriza2Id, setSelectedAutoriza2Id] = useState<string>("");
   
   const [autoIva, setAutoIva] = useState<boolean>(true);
+  const [bancoSearch, setBancoSearch] = useState<string>("");
+  const [isBancoPickerOpen, setIsBancoPickerOpen] = useState(false);
   const [fuenteSearch, setFuenteSearch] = useState<Record<string, string>>({});
   const [proyectoSearch, setProyectoSearch] = useState<Record<string, string>>({});
   const [objetoSearch, setObjetoSearch] = useState<Record<string, string>>({});
   const [openBudgetPicker, setOpenBudgetPicker] = useState<string | null>(null);
+  const [budgetRecordDraft, setBudgetRecordDraft] = useState<BudgetRecordDraft | null>(null);
+  const [currencyDrafts, setCurrencyDrafts] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const initializedNewFormRef = useRef(false);
+  const bancoNombres = catalogs.bancoNombres?.length
+    ? catalogs.bancoNombres
+    : Array.from(new Set(catalogs.bancos.map(banco => banco.nombre))).map((nombre, index) => ({
+        id: `bn_${index + 1}`,
+        nombre
+      }));
 
   useEffect(() => {
-    if (!openBudgetPicker) return;
+    if (!openBudgetPicker && !isBancoPickerOpen) return;
 
     const handleOutsideClick = (event: MouseEvent) => {
       const target = event.target;
-      if (target instanceof HTMLElement && target.closest("[data-budget-picker]")) return;
+      if (target instanceof Element && target.closest("[data-budget-picker]")) return;
+      if (target instanceof Element && target.closest("[data-bank-picker]")) return;
       setOpenBudgetPicker(null);
+      setIsBancoPickerOpen(false);
     };
 
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [openBudgetPicker]);
+  }, [openBudgetPicker, isBancoPickerOpen]);
 
   const normalizeSearch = (value: string) => {
     return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -118,8 +143,12 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
   const restoreBankDraft = (draft: SavedCLCFormDraft) => {
     if (draft.selectedBancoId === "custom") {
+      const matchedBankName = bancoNombres.find(
+        bankName => normalizeCatalogText(bankName.nombre) === normalizeCatalogText(draft.customBancoNombre || "")
+      );
       setSelectedBancoId("custom");
-      setCustomBancoNombre(draft.customBancoNombre || "");
+      setSelectedBancoNombreId(draft.selectedBancoNombreId || matchedBankName?.id || (draft.customBancoNombre ? "custom" : ""));
+      setCustomBancoNombre(draft.selectedBancoNombreId === "custom" || !matchedBankName ? draft.customBancoNombre || "" : "");
       setBancoCuenta(draft.bancoCuenta || "");
       setBancoClabe(draft.bancoClabe || "");
       return;
@@ -127,6 +156,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
     const selectedBank = catalogs.bancos.find(b => b.id === draft.selectedBancoId) || getDefaultBanco();
     setSelectedBancoId(selectedBank?.id || "");
+    setSelectedBancoNombreId("");
     setCustomBancoNombre("");
     setBancoCuenta(selectedBank?.cuenta || "");
     setBancoClabe(selectedBank?.clabe || "");
@@ -218,9 +248,14 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       const matchedUnidad = catalogs.unidades.find(u => u.clave === documentToEdit.unidadClave);
       setSelectedUnidadId(matchedUnidad ? matchedUnidad.id : "");
       
-      const matchedBanco = catalogs.bancos.find(b => b.nombre === documentToEdit.bancoNombre);
+      const matchedBanco = catalogs.bancos.find(b => (
+        b.cuenta === documentToEdit.bancoCuenta &&
+        b.clabe === documentToEdit.bancoClabe
+      ));
+      const matchedBancoNombre = bancoNombres.find(b => b.nombre === documentToEdit.bancoNombre);
       setSelectedBancoId(matchedBanco ? matchedBanco.id : "custom");
-      setCustomBancoNombre(matchedBanco ? "" : documentToEdit.bancoNombre);
+      setSelectedBancoNombreId(matchedBanco ? "" : matchedBancoNombre?.id || "custom");
+      setCustomBancoNombre(matchedBanco || matchedBancoNombre ? "" : documentToEdit.bancoNombre);
       setBancoCuenta(documentToEdit.bancoCuenta);
       setBancoClabe(documentToEdit.bancoClabe);
       
@@ -273,6 +308,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         setSelectedUnidadId(catalogs.defaultUnidadId || catalogs.unidades[0].id);
       }
       setSelectedBancoId("");
+      setSelectedBancoNombreId("");
       setBancoCuenta("");
       setBancoClabe("");
       setSelectedProveedorId("");
@@ -329,6 +365,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       anio: año,
       selectedUnidadId,
       selectedBancoId,
+      selectedBancoNombreId,
       bancoCuenta,
       bancoClabe,
       selectedProveedorId,
@@ -349,6 +386,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     año,
     selectedUnidadId,
     selectedBancoId,
+    selectedBancoNombreId,
     bancoCuenta,
     bancoClabe,
     selectedProveedorId,
@@ -370,7 +408,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
   const handleBancoChange = (id: string) => {
     setSelectedBancoId(id);
+    setSelectedBancoNombreId("");
     setCustomBancoNombre("");
+    setBancoSearch("");
+    setIsBancoPickerOpen(false);
     if (!id || id === "custom") {
       setBancoCuenta("");
       setBancoClabe("");
@@ -455,6 +496,36 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     }));
   };
 
+  const getCurrencyDraftKey = (itemId: string, field: CurrencyField) => `${itemId}-${field}`;
+
+  const sanitizeCurrencyDraft = (rawValue: string) => {
+    const stripped = rawValue.replace(/,/g, "").replace(/[^\d.]/g, "");
+    const [integerPart, ...decimalParts] = stripped.split(".");
+    if (decimalParts.length === 0) return integerPart;
+    return `${integerPart}.${decimalParts.join("").slice(0, 2)}`;
+  };
+
+  const handleCurrencyChange = (itemId: string, field: CurrencyField, rawValue: string) => {
+    const draftKey = getCurrencyDraftKey(itemId, field);
+    const sanitizedValue = sanitizeCurrencyDraft(rawValue);
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: sanitizedValue }));
+    updateItem(itemId, field, parseCurrency(sanitizedValue));
+  };
+
+  const handleCurrencyFocus = (itemId: string, field: CurrencyField, value: number) => {
+    const draftKey = getCurrencyDraftKey(itemId, field);
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: value ? String(value) : "" }));
+  };
+
+  const handleCurrencyBlur = (itemId: string, field: CurrencyField) => {
+    const draftKey = getCurrencyDraftKey(itemId, field);
+    setCurrencyDrafts(prev => {
+      const next = { ...prev };
+      delete next[draftKey];
+      return next;
+    });
+  };
+
   // Re-calculate all items on autoIva change
   useEffect(() => {
     setItems(prevItems => prevItems.map(item => {
@@ -531,7 +602,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
     let bancoNom = "";
     if (selectedBancoId === "custom") {
-      bancoNom = customBancoNombre.trim();
+      if (selectedBancoNombreId === "custom") {
+        bancoNom = customBancoNombre.trim();
+      } else {
+        bancoNom = bancoNombres.find(bankName => bankName.id === selectedBancoNombreId)?.nombre || "";
+      }
     } else {
       const b = catalogs.bancos.find(b => b.id === selectedBancoId);
       if (b) bancoNom = b.nombre;
@@ -564,6 +639,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         alert(`Error en Factura #${i + 1}: El número de factura (UUID / Folio) es obligatorio.`);
         return;
       }
+      if (!item.fuenteClave.trim() || !item.proyectoClave.trim() || !item.objetoClave.trim()) {
+        alert(`Error en Factura #${i + 1}: La imputación presupuestaria oficial es obligatoria.`);
+        return;
+      }
       if (item.subTotal <= 0) {
         alert(`Error en Factura #${i + 1}: El subtotal debe ser un número positivo mayor que cero.`);
         return;
@@ -586,6 +665,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       }
     }
 
+    if (!concepto.trim()) {
+      alert("Error: La descripción o concepto del expediente es obligatorio.");
+      return;
+    }
+
     const solObj = catalogs.firmas.find(f => f.id === selectedSolicitaId);
     const aut1Obj = catalogs.firmas.find(f => f.id === selectedAutoriza1Id);
     const aut2Obj = catalogs.firmas.find(f => f.id === selectedAutoriza2Id);
@@ -603,7 +687,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       proveedorNombre: provNom,
       proveedorRfc: proveedorRfc.toUpperCase(),
       items: validItems,
-      concepto: concepto.trim() || "ADQUISICIÓN DE INSUMOS MUNICIPALES",
+      concepto: concepto.trim(),
       solicitaNombre: solObj ? solObj.nombre : "ING. JOSE ANTONIO FLORES BERUMEN",
       solicitaPuesto: solObj ? solObj.puesto : "SECRETARIO DE SERVICIOS PUBLICOS MUNICIPALES",
       autoriza1Nombre: aut1Obj ? aut1Obj.nombre : "L.C. JESÚS RODRÍGUEZ DEL MURO",
@@ -632,9 +716,84 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     }
   };
 
+  const handleBancoNombreChange = (id: string) => {
+    setSelectedBancoNombreId(id);
+    setCustomBancoNombre("");
+  };
+
+  const getBudgetDescriptionLabel = (pickerType: BudgetPickerType) => {
+    return pickerType === "objeto" ? "Nombre del objeto del gasto" : "Descripcion oficial";
+  };
+
+  const startBudgetRecord = (pickerType: BudgetPickerType, itemId: string, query: string) => {
+    const guessedClave = query.trim().match(/^[\[(]?([A-Za-z0-9.-]+)/)?.[1] || "";
+    setBudgetRecordDraft({ pickerType, itemId, clave: guessedClave, description: "" });
+    setOpenBudgetPicker(null);
+  };
+
+  const createBudgetRecord = async () => {
+    if (!budgetRecordDraft) return;
+
+    const { pickerType, itemId } = budgetRecordDraft;
+    const clave = budgetRecordDraft.clave.trim();
+    if (!clave) return;
+
+    const normalizedClave = normalizeCatalogText(clave);
+    const isDuplicate =
+      pickerType === "fuente"
+        ? catalogs.fuentes.some(record => normalizeCatalogText(record.clave) === normalizedClave)
+        : pickerType === "proyecto"
+          ? catalogs.proyectos.some(record => normalizeCatalogText(record.clave) === normalizedClave)
+          : catalogs.objetos.some(record => normalizeCatalogText(record.clave) === normalizedClave);
+    if (isDuplicate) {
+      alert("La clave ya existe en el catálogo.");
+      return;
+    }
+
+    const description = budgetRecordDraft.description.trim();
+    if (!description) return;
+    const normalizedDescription = normalizeCatalogText(description);
+
+    let updatedCatalogs: AppCatalogs;
+    if (pickerType === "fuente") {
+      updatedCatalogs = {
+        ...catalogs,
+        fuentes: [...catalogs.fuentes, { id: createCatalogId("f"), clave: normalizedClave, descripcion: normalizedDescription }]
+      };
+    } else if (pickerType === "proyecto") {
+      updatedCatalogs = {
+        ...catalogs,
+        proyectos: [...catalogs.proyectos, { id: createCatalogId("pr"), clave: normalizedClave, descripcion: normalizedDescription }]
+      };
+    } else {
+      updatedCatalogs = {
+        ...catalogs,
+        objetos: [...catalogs.objetos, { id: createCatalogId("o"), clave: normalizedClave, nombre: normalizedDescription }]
+      };
+    }
+
+    try {
+      await onCatalogsChange(updatedCatalogs);
+      setItems(prevItems => prevItems.map(item => {
+        if (item.id !== itemId) return item;
+        if (pickerType === "fuente") return { ...item, fuenteClave: normalizedClave };
+        if (pickerType === "proyecto") return { ...item, proyectoClave: normalizedClave };
+        return { ...item, objetoClave: normalizedClave, objetoNombre: normalizedDescription };
+      }));
+      if (pickerType === "fuente") setFuenteSearch(prev => ({ ...prev, [itemId]: "" }));
+      if (pickerType === "proyecto") setProyectoSearch(prev => ({ ...prev, [itemId]: "" }));
+      if (pickerType === "objeto") setObjetoSearch(prev => ({ ...prev, [itemId]: "" }));
+      setBudgetRecordDraft(null);
+      setOpenBudgetPicker(null);
+    } catch (error) {
+      console.error("Error creating budget catalog record", error);
+      alert("No se pudo guardar el nuevo registro presupuestario.");
+    }
+  };
+
   const renderBudgetPicker = (
     item: CLCItem,
-    pickerType: string,
+    pickerType: BudgetPickerType,
     label: string,
     value: string,
     options: BudgetPickerOption[],
@@ -655,7 +814,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     return (
       <div className="relative" data-budget-picker>
         <label className="block text-[11px] font-bold text-slate-600 mb-1">
-          {label}
+          {label} <RequiredMark />
         </label>
         <button
           type="button"
@@ -702,6 +861,14 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => startBudgetRecord(pickerType, item.id, query)}
+              className="mt-2 w-full rounded-md border border-dashed border-indigo-200 bg-indigo-50/50 px-2.5 py-1.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+            >
+              <Plus className="mr-1 inline h-3 w-3" />
+              Agregar registro al catálogo
+            </button>
           </div>
         )}
       </div>
@@ -761,7 +928,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             {/* Unidad dropdown */}
             <div className="lg:col-span-5">
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Unidad Administrativa Responsable</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">Unidad Administrativa Responsable <RequiredMark /></label>
               <select
                 id="field-unidad"
                 value={selectedUnidadId}
@@ -778,51 +945,124 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
             {/* Banco dropdown and inputs */}
             <div className="lg:col-span-7 grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Institución Bancaria</label>
-                <select
+              <div className="relative" data-bank-picker>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Número de Cuenta <RequiredMark /></label>
+                <button
+                  type="button"
                   id="field-banco"
-                  value={selectedBancoId}
-                  onChange={e => handleBancoChange(e.target.value)}
-                  className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                  onClick={() => setIsBancoPickerOpen(prev => !prev)}
+                  className="w-full min-h-10 text-left text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden flex items-center justify-between gap-2"
                 >
-                  <option value="">Selecciona institución bancaria...</option>
-                  {catalogs.bancos.map(b => (
-                    <option key={b.id} value={b.id}>{b.nombre}</option>
-                  ))}
-                  <option value="custom" className="text-indigo-600 font-bold">-- REGISTRAR OTRO BANCO --</option>
-                </select>
+                  <span className="truncate">
+                    {selectedBancoId === "custom"
+                      ? bancoCuenta || "Registrar otro numero de cuenta"
+                      : catalogs.bancos.find(b => b.id === selectedBancoId)?.cuenta || "Selecciona numero de cuenta..."}
+                  </span>
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${isBancoPickerOpen ? "rotate-180" : ""}`} />
+                </button>
+                {isBancoPickerOpen && (
+                  <div className="absolute z-40 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-xl p-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Filtrar por cuenta, banco o CLABE..."
+                      value={bancoSearch}
+                      onChange={e => setBancoSearch(e.target.value)}
+                      className="w-full text-[11px] border border-slate-200 rounded-md px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                    />
+                    <div className="mt-1.5 max-h-48 overflow-y-auto space-y-0.5">
+                      {catalogs.bancos
+                        .filter(b => matchesSearch(bancoSearch, b.cuenta, b.nombre, b.clabe))
+                        .map(b => (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => handleBancoChange(b.id)}
+                            className={`w-full text-left text-[11px] rounded-md px-2.5 py-1.5 transition-colors ${
+                              b.id === selectedBancoId
+                                ? "bg-indigo-50 text-indigo-900 font-black"
+                                : "text-slate-700 hover:bg-slate-100 font-semibold"
+                            }`}
+                          >
+                            <span className="block font-mono">{b.cuenta}</span>
+                            <span className="block truncate text-[10px] text-slate-400">{b.nombre} - CLABE {b.clabe}</span>
+                          </button>
+                        ))}
+                      {catalogs.bancos.filter(b => matchesSearch(bancoSearch, b.cuenta, b.nombre, b.clabe)).length === 0 && (
+                        <div className="text-[11px] text-slate-400 px-2 py-2 font-semibold">
+                          Sin coincidencias
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleBancoChange("custom")}
+                      className="mt-2 w-full rounded-md border border-dashed border-indigo-200 bg-indigo-50/50 px-2.5 py-1.5 text-left text-[11px] font-bold text-indigo-700 hover:bg-indigo-50 cursor-pointer"
+                    >
+                      <Plus className="mr-1 inline h-3 w-3" />
+                      Registrar otro numero de cuenta
+                    </button>
+                  </div>
+                )}
                 {selectedBancoId === "custom" && (
                   <input
                     type="text"
-                    placeholder="Escribe el nombre del banco..."
-                    value={customBancoNombre}
-                    onChange={e => setCustomBancoNombre(e.target.value.toUpperCase())}
-                    className="mt-1.5 w-full text-xs border border-slate-350 rounded-lg px-2.5 py-2 bg-amber-50 text-slate-800 font-bold placeholder:text-amber-700/55 focus:outline-hidden"
+                    placeholder="Escribe el número de cuenta..."
+                    value={bancoCuenta}
+                    onChange={e => setBancoCuenta(e.target.value)}
+                    className="mt-1.5 w-full text-xs font-bold font-mono border border-slate-350 rounded-lg px-2.5 py-2 bg-amber-50 text-slate-800 placeholder:text-amber-700/55 focus:outline-hidden"
                   />
                 )}
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Número de Cuenta</label>
-                <input
-                  type="text"
-                  placeholder="Ej: 65509270940"
-                  value={bancoCuenta}
-                  onChange={e => setBancoCuenta(e.target.value)}
-                  className="w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-800"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">CLABE Interbancaria (18 d.)</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">CLABE Interbancaria (18 d.) <RequiredMark /></label>
                 <input
                   type="text"
                   placeholder="Ej: 01493065509270940"
                   value={bancoClabe}
                   onChange={e => setBancoClabe(e.target.value)}
-                  className="w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-800 truncate"
+                  readOnly={selectedBancoId !== "custom"}
+                  className={`w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 text-slate-800 truncate ${
+                    selectedBancoId === "custom" ? "bg-white" : "bg-slate-100"
+                  }`}
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Institución Bancaria <RequiredMark /></label>
+                {selectedBancoId === "custom" ? (
+                  <>
+                    <select
+                      value={selectedBancoNombreId}
+                      onChange={e => handleBancoNombreChange(e.target.value)}
+                      className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                    >
+                      <option value="">Selecciona institución bancaria...</option>
+                      {bancoNombres.map(bankName => (
+                        <option key={bankName.id} value={bankName.id}>{bankName.nombre}</option>
+                      ))}
+                      <option value="custom" className="text-indigo-600 font-bold">-- REGISTRAR OTRO BANCO --</option>
+                    </select>
+                    {selectedBancoNombreId === "custom" && (
+                      <input
+                        type="text"
+                        placeholder="Escribe el nombre del banco..."
+                        value={customBancoNombre}
+                        onChange={e => setCustomBancoNombre(e.target.value.toUpperCase())}
+                        className="mt-1.5 w-full text-xs border border-slate-350 rounded-lg px-2.5 py-2 bg-amber-50 text-slate-800 font-bold placeholder:text-amber-700/55 focus:outline-hidden"
+                      />
+                    )}
+                  </>
+                ) : (
+                  <input
+                    type="text"
+                    value={catalogs.bancos.find(b => b.id === selectedBancoId)?.nombre || ""}
+                    readOnly
+                    placeholder="Se autollenará al elegir la cuenta"
+                    className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-slate-100 text-slate-800"
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -841,7 +1081,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             <div className="lg:col-span-8">
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">Socio Comercial / Proveedor Oficial Autorizado</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">Socio Comercial / Proveedor Oficial Autorizado <RequiredMark /></label>
               <select
                 id="field-proveedor"
                 value={selectedProveedorId}
@@ -866,7 +1106,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
             </div>
 
             <div className="lg:col-span-4">
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">R.F.C. (Cédula Fiscal Beneficiario)</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">R.F.C. (Cédula Fiscal Beneficiario) <RequiredMark /></label>
               <input
                 type="text"
                 placeholder="Ej: MPL020607CX5"
@@ -953,7 +1193,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                       {renderBudgetPicker(
                         item,
                         "fuente",
-                        "Fuente de Financiamiento *",
+                        "Fuente de Financiamiento",
                         item.fuenteClave,
                         catalogs.fuentes.map(f => ({
                           id: f.id,
@@ -969,7 +1209,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                       {renderBudgetPicker(
                         item,
                         "proyecto",
-                        "Proyecto Presupuestal Asociado *",
+                        "Proyecto Presupuestal Asociado",
                         item.proyectoClave,
                         catalogs.proyectos.map(p => ({
                           id: p.id,
@@ -985,7 +1225,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                       {renderBudgetPicker(
                         item,
                         "objeto",
-                        "Clasificador / Objeto del Gasto (Partida) *",
+                        "Clasificador / Objeto del Gasto (Partida)",
                         item.objetoClave,
                         catalogs.objetos.map(o => ({
                           id: o.id,
@@ -1008,7 +1248,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                       
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
-                          Número de Factura * (Folio Digital / UUID)
+                          Número de Factura <RequiredMark /> (Folio Digital / UUID)
                         </label>
                         <input
                           type="text"
@@ -1054,15 +1294,17 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtotal *</label>
+                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Subtotal <RequiredMark /></label>
                           <div className="relative">
                             <span className="absolute left-2.5 top-2 text-xs font-bold text-slate-400 select-none">$</span>
                             <input
                               type="text"
                               inputMode="decimal"
                               placeholder="0.00"
-                              value={formatCurrencyInput(item.subTotal)}
-                              onChange={e => updateItem(item.id, "subTotal", parseCurrency(e.target.value))}
+                              value={currencyDrafts[getCurrencyDraftKey(item.id, "subTotal")] ?? formatCurrencyInput(item.subTotal)}
+                              onFocus={() => handleCurrencyFocus(item.id, "subTotal", item.subTotal)}
+                              onBlur={() => handleCurrencyBlur(item.id, "subTotal")}
+                              onChange={e => handleCurrencyChange(item.id, "subTotal", e.target.value)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 font-bold font-mono text-slate-850"
                             />
                           </div>
@@ -1076,8 +1318,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               type="text"
                               inputMode="decimal"
                               placeholder="0.00"
-                              value={formatCurrencyInput(item.descuento)}
-                              onChange={e => updateItem(item.id, "descuento", parseCurrency(e.target.value))}
+                              value={currencyDrafts[getCurrencyDraftKey(item.id, "descuento")] ?? formatCurrencyInput(item.descuento)}
+                              onFocus={() => handleCurrencyFocus(item.id, "descuento", item.descuento)}
+                              onBlur={() => handleCurrencyBlur(item.id, "descuento")}
+                              onChange={e => handleCurrencyChange(item.id, "descuento", e.target.value)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 font-mono text-slate-500"
                             />
                           </div>
@@ -1093,8 +1337,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               type="text"
                               inputMode="decimal"
                               disabled={autoIva}
-                              value={formatCurrencyInput(item.iva)}
-                              onChange={e => updateItem(item.id, "iva", parseCurrency(e.target.value))}
+                              value={currencyDrafts[getCurrencyDraftKey(item.id, "iva")] ?? formatCurrencyInput(item.iva)}
+                              onFocus={() => handleCurrencyFocus(item.id, "iva", item.iva)}
+                              onBlur={() => handleCurrencyBlur(item.id, "iva")}
+                              onChange={e => handleCurrencyChange(item.id, "iva", e.target.value)}
                               className={`w-full text-xs border border-slate-200 rounded-lg pl-5 pr-1 py-1.5 font-bold font-mono ${
                                 autoIva 
                                   ? "bg-slate-100 text-slate-500 border-dashed cursor-not-allowed" 
@@ -1112,8 +1358,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               type="text"
                               inputMode="decimal"
                               placeholder="0.00"
-                              value={formatCurrencyInput(item.isr)}
-                              onChange={e => updateItem(item.id, "isr", parseCurrency(e.target.value))}
+                              value={currencyDrafts[getCurrencyDraftKey(item.id, "isr")] ?? formatCurrencyInput(item.isr)}
+                              onFocus={() => handleCurrencyFocus(item.id, "isr", item.isr)}
+                              onBlur={() => handleCurrencyBlur(item.id, "isr")}
+                              onChange={e => handleCurrencyChange(item.id, "isr", e.target.value)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 text-rose-700 font-bold font-mono"
                             />
                           </div>
@@ -1158,7 +1406,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">Descripción o Concepto (Glosa Presupuestal Oficial) *</label>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">Descripción o Concepto (Glosa Presupuestal Oficial) <RequiredMark /></label>
             <textarea
               placeholder="Escribe la glosa o concepto oficial del expediente (ej: COMBUSTIBLE CORRESPONDIENTE AL MES DE...)"
               value={concepto}
@@ -1285,6 +1533,84 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         </div>
 
       </div>
+
+      {budgetRecordDraft && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={() => setBudgetRecordDraft(null)}
+        >
+          <form
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+            onClick={event => event.stopPropagation()}
+            onSubmit={event => {
+              event.preventDefault();
+              void createBudgetRecord();
+            }}
+          >
+            <div className="border-b border-slate-100 bg-slate-50 px-5 py-4">
+              <h3 className="text-sm font-black text-slate-900">
+                Agregar registro presupuestario
+              </h3>
+              <p className="mt-1 text-[11px] font-semibold text-slate-500">
+                {budgetRecordDraft.pickerType === "fuente"
+                  ? "Fuente de Financiamiento"
+                  : budgetRecordDraft.pickerType === "proyecto"
+                    ? "Proyecto Presupuestal Asociado"
+                    : "Clasificador / Objeto del Gasto"}
+              </p>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-bold text-slate-600">
+                  Clave oficial <RequiredMark />
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={budgetRecordDraft.clave}
+                  onChange={event => setBudgetRecordDraft({
+                    ...budgetRecordDraft,
+                    clave: event.target.value.toUpperCase()
+                  })}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-[11px] font-bold text-slate-600">
+                  {getBudgetDescriptionLabel(budgetRecordDraft.pickerType)} <RequiredMark />
+                </label>
+                <input
+                  type="text"
+                  value={budgetRecordDraft.description}
+                  onChange={event => setBudgetRecordDraft({
+                    ...budgetRecordDraft,
+                    description: event.target.value.toUpperCase()
+                  })}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setBudgetRecordDraft(null)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer"
+              >
+                Guardar
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
     </div>
   );
