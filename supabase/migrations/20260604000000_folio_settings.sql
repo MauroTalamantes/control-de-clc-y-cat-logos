@@ -163,3 +163,5 @@ $$;
 
 revoke all on function public.clc_set_next_folio_number(integer, integer, text) from public;
 grant execute on function public.clc_set_next_folio_number(integer, integer, text) to anon, authenticated;
+
+notify pgrst, 'reload schema';

@@ -44,12 +44,18 @@ export default function CLCViewer({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [activeTooltip, setActiveTooltip] = useState<TooltipState>(null);
-  const [previewMode, setPreviewMode] = useState<"formato" | "datos">("formato");
+  const [previewMode, setPreviewMode] = useState<"formato" | "datos">("datos");
   const [officialPreviewUrl, setOfficialPreviewUrl] = useState<string | null>(null);
   const [officialPreviewStatus, setOfficialPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [officialPreviewError, setOfficialPreviewError] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const dateFilterRef = useRef<HTMLDivElement>(null);
+  const officialPreviewCacheRef = useRef<Map<string, string>>(new Map());
+
+  const openPreview = (docId: string) => {
+    setPreviewMode("datos");
+    setSelectedDocId(docId);
+  };
 
   const handleSelectDoc = (docId: string, isChecked: boolean) => {
     setSelectedDocumentIds(prev =>
@@ -178,6 +184,15 @@ const handleDownloadSelectedPDF = async () => {
   const selectedDocPreviewKey = useMemo(() => selectedDoc ? JSON.stringify(selectedDoc) : "", [selectedDoc]);
 
   useEffect(() => {
+    return () => {
+      for (const url of officialPreviewCacheRef.current.values()) {
+        URL.revokeObjectURL(url);
+      }
+      officialPreviewCacheRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!selectedDoc || previewMode !== "formato") {
       setOfficialPreviewStatus("idle");
       setOfficialPreviewError(null);
@@ -186,18 +201,27 @@ const handleDownloadSelectedPDF = async () => {
     }
 
     let isActive = true;
-    let nextUrl: string | null = null;
+    const cachedUrl = officialPreviewCacheRef.current.get(selectedDocPreviewKey);
+    if (cachedUrl) {
+      setOfficialPreviewUrl(cachedUrl);
+      setOfficialPreviewStatus("ready");
+      setOfficialPreviewError(null);
+      return () => {
+        isActive = false;
+      };
+    }
+
     setOfficialPreviewStatus("loading");
     setOfficialPreviewError(null);
     setOfficialPreviewUrl(null);
 
     createDocPDFPreviewUrl(selectedDoc)
       .then(url => {
-        nextUrl = url;
         if (!isActive) {
           URL.revokeObjectURL(url);
           return;
         }
+        officialPreviewCacheRef.current.set(selectedDocPreviewKey, url);
         setOfficialPreviewUrl(url);
         setOfficialPreviewStatus("ready");
       })
@@ -210,7 +234,6 @@ const handleDownloadSelectedPDF = async () => {
 
     return () => {
       isActive = false;
-      if (nextUrl) URL.revokeObjectURL(nextUrl);
     };
   }, [selectedDocPreviewKey, previewMode]);
 
@@ -416,7 +439,7 @@ const handleDownloadSelectedPDF = async () => {
                           ? "bg-indigo-50/40 hover:bg-indigo-50/60 border-l-3 border-l-indigo-600" 
                           : ""
                       }`} 
-                      onClick={() => setSelectedDocId(doc.id)}
+                      onClick={() => openPreview(doc.id)}
                     >
                       <td className="p-3 text-center align-middle" onClick={e => e.stopPropagation()}>
                         <input
@@ -477,7 +500,7 @@ const handleDownloadSelectedPDF = async () => {
                             onMouseLeave={() => setActiveTooltip(null)}
                           >
                             <button
-                              onClick={() => setSelectedDocId(doc.id)}
+                              onClick={() => openPreview(doc.id)}
                               className="bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white p-1.5 rounded-lg transition-all cursor-pointer border border-indigo-150/40"
                               aria-label="Ver previsualizacion"
                             >

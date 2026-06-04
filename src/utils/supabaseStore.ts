@@ -56,6 +56,12 @@ async function callRpc<T>(name: string, args: Record<string, unknown>): Promise<
   const { data, error } = await client.rpc(name, args);
 
   if (error) {
+    if (name === "clc_set_next_folio_number" && /schema cache|Could not find the function/i.test(error.message)) {
+      throw new Error(
+        "No se encontro la funcion de Supabase para modificar folios. Ejecuta la migracion supabase/migrations/20260604000000_folio_settings.sql en el SQL Editor de Supabase y despues recarga el schema cache."
+      );
+    }
+
     throw new Error(`${name}: ${error.message}`);
   }
 

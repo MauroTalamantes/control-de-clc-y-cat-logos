@@ -313,6 +313,57 @@ function adjustDimension(sheetDoc: XMLDocument, rowOffset: number) {
   dimension.setAttribute("ref", `${startRef}:${withRow(endRef, rowFromCellRef(endRef) + rowOffset)}`);
 }
 
+function ensureSheetPrintFit(sheetDoc: XMLDocument) {
+  let sheetPr = sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "sheetPr")[0];
+  if (!sheetPr) {
+    sheetPr = sheetDoc.createElementNS(XLSX_MAIN_NS, "sheetPr");
+    const dimension = sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "dimension")[0];
+    sheetDoc.documentElement.insertBefore(sheetPr, dimension || sheetDoc.documentElement.firstChild);
+  }
+
+  let pageSetUpPr = childElements(sheetPr, "pageSetUpPr")[0];
+  if (!pageSetUpPr) {
+    pageSetUpPr = sheetDoc.createElementNS(XLSX_MAIN_NS, "pageSetUpPr");
+    sheetPr.appendChild(pageSetUpPr);
+  }
+  pageSetUpPr.setAttribute("fitToPage", "1");
+
+  let pageSetup = sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "pageSetup")[0];
+  if (!pageSetup) {
+    pageSetup = sheetDoc.createElementNS(XLSX_MAIN_NS, "pageSetup");
+    sheetDoc.documentElement.appendChild(pageSetup);
+  }
+  pageSetup.removeAttribute("scale");
+  pageSetup.setAttribute("fitToWidth", "1");
+  pageSetup.setAttribute("fitToHeight", "1");
+  pageSetup.setAttribute("orientation", pageSetup.getAttribute("orientation") || "landscape");
+}
+
+function adjustWorkbookPrintArea(zip: XmlZip, sheetName: string, rowOffset: number) {
+  if (!zip["xl/workbook.xml"]) return;
+
+  const workbook = parseXml(strFromU8(zip["xl/workbook.xml"]), "workbook.xml");
+  let definedNames = workbook.getElementsByTagNameNS(XLSX_MAIN_NS, "definedNames")[0];
+  if (!definedNames) {
+    definedNames = workbook.createElementNS(XLSX_MAIN_NS, "definedNames");
+    workbook.documentElement.appendChild(definedNames);
+  }
+
+  let printArea = childElements(definedNames, "definedName").find(
+    node => node.getAttribute("name") === "_xlnm.Print_Area" && node.getAttribute("localSheetId") === "0"
+  );
+  if (!printArea) {
+    printArea = workbook.createElementNS(XLSX_MAIN_NS, "definedName");
+    printArea.setAttribute("name", "_xlnm.Print_Area");
+    printArea.setAttribute("localSheetId", "0");
+    definedNames.appendChild(printArea);
+  }
+
+  const lastPrintRow = BASE_DATE_ROW + rowOffset;
+  printArea.textContent = `${sheetName}!$A$1:$W$${lastPrintRow}`;
+  zip["xl/workbook.xml"] = strToU8(serializeXml(workbook));
+}
+
 function adjustMergeCells(sheetDoc: XMLDocument, rowOffset: number) {
   if (rowOffset <= 0) return;
   const mergeCells = sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "mergeCells")[0];
@@ -466,6 +517,8 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   const rowOffset = cloneItemRows(sheetDoc, itemCount);
 
   adjustDimension(sheetDoc, rowOffset);
+  ensureSheetPrintFit(sheetDoc);
+  adjustWorkbookPrintArea(zip, TEMPLATE_SHEET_NAME, rowOffset);
   adjustMergeCells(sheetDoc, rowOffset);
   fillGeneralData(sheetDoc, doc);
   fillItemRows(sheetDoc, doc, itemCount);
