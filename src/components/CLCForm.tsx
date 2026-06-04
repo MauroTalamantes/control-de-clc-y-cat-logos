@@ -516,16 +516,23 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     return `${integerPart}.${decimalParts.join("").slice(0, 2)}`;
   };
 
+  const formatCurrencyDraft = (value: string) => {
+    if (!value) return "";
+    const [integerPart, decimalPart] = value.split(".");
+    const formattedInteger = Number(integerPart || "0").toLocaleString("en-US");
+    return value.includes(".") ? `${formattedInteger}.${decimalPart ?? ""}` : formattedInteger;
+  };
+
   const handleCurrencyChange = (itemId: string, field: CurrencyField, rawValue: string) => {
     const draftKey = getCurrencyDraftKey(itemId, field);
     const sanitizedValue = sanitizeCurrencyDraft(rawValue);
-    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: sanitizedValue }));
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: formatCurrencyDraft(sanitizedValue) }));
     updateItem(itemId, field, parseCurrency(sanitizedValue));
   };
 
   const handleCurrencyFocus = (itemId: string, field: CurrencyField, value: number) => {
     const draftKey = getCurrencyDraftKey(itemId, field);
-    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: value ? String(value) : "" }));
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: value ? formatCurrencyInput(value) : "" }));
   };
 
   const handleCurrencyBlur = (itemId: string, field: CurrencyField) => {
