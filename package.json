@@ -1,16 +1,21 @@
 {
-  "name": "react-example",
+  "name": "control-de-clc-y-catalogos",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Aplicacion de escritorio para control de CLC y catalogos.",
   "author": "Ayuntamiento de Guadalupe",
   "type": "module",
   "main": "electron/main.cjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MauroTalamantes/control-de-clc-y-cat-logos.git"
+  },
   "scripts": {
     "dev": "vite --port=3001 --host=0.0.0.0",
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3001 && electron .\"",
     "build": "vite build",
     "electron:build": "npm run build && electron-builder",
+    "electron:publish": "npm run build && electron-builder --publish always",
     "dist": "npm run electron:build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -27,12 +32,26 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "MauroTalamantes",
+        "repo": "control-de-clc-y-cat-logos",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "signAndEditExecutable": false,
       "target": [
         "nsis",
         "portable"
       ]
+    },
+    "nsis": {
+      "artifactName": "Control-de-CLC-y-Catalogos-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Control-de-CLC-y-Catalogos-Portable-${version}.${ext}"
     }
   },
   "dependencies": {
@@ -41,6 +60,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.8.3",
     "express": "^4.21.2",
     "fflate": "^0.8.3",
     "jspdf": "^4.2.1",

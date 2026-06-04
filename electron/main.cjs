@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -6,6 +7,8 @@ const { pathToFileURL } = require("node:url");
 const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
+const AUTO_UPDATE_CHECK_DELAY_MS = 15_000;
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // The app is form/report oriented and does not need GPU rendering. Some Windows
 // graphics drivers can leave Chromium's accelerated surface stale until the
@@ -39,6 +42,69 @@ function showMessageBoxSyncForEvent(event, options) {
   return parentWindow
     ? dialog.showMessageBoxSync(parentWindow, options)
     : dialog.showMessageBoxSync(options);
+}
+
+function showMessageBoxForWindow(window, options) {
+  const parentWindow = window && !window.isDestroyed() ? window : undefined;
+  return parentWindow
+    ? dialog.showMessageBox(parentWindow, options)
+    : dialog.showMessageBox(options);
+}
+
+function setupAutoUpdates(mainWindow) {
+  if (isDev) return;
+
+  let updateDialogOpen = false;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = {
+    info: (...args) => console.info("[auto-update]", ...args),
+    warn: (...args) => console.warn("[auto-update]", ...args),
+    error: (...args) => console.error("[auto-update]", ...args)
+  };
+
+  autoUpdater.on("checking-for-update", () => {
+    console.info("[auto-update] Checking for updates.");
+  });
+  autoUpdater.on("update-available", info => {
+    console.info("[auto-update] Update available.", info?.version || "");
+  });
+  autoUpdater.on("update-not-available", info => {
+    console.info("[auto-update] No update available.", info?.version || "");
+  });
+  autoUpdater.on("error", error => {
+    console.error("[auto-update] Update error.", error);
+  });
+  autoUpdater.on("update-downloaded", async info => {
+    if (updateDialogOpen) return;
+    updateDialogOpen = true;
+    try {
+      const { response } = await showMessageBoxForWindow(mainWindow, {
+        type: "info",
+        buttons: ["Reiniciar ahora", "Despues"],
+        defaultId: 0,
+        cancelId: 1,
+        message: "Actualizacion lista para instalar",
+        detail: `Se descargo la version ${info?.version || "mas reciente"}. Reinicia la aplicacion para aplicar la actualizacion.`
+      });
+      if (response === 0) {
+        autoUpdater.quitAndInstall(false, true);
+      }
+    } finally {
+      updateDialogOpen = false;
+    }
+  });
+
+  const checkForUpdates = () => {
+    if (mainWindow.isDestroyed()) return;
+    autoUpdater.checkForUpdates().catch(error => {
+      console.error("[auto-update] Could not check for updates.", error);
+    });
+  };
+
+  setTimeout(checkForUpdates, AUTO_UPDATE_CHECK_DELAY_MS);
+  const updateInterval = setInterval(checkForUpdates, AUTO_UPDATE_CHECK_INTERVAL_MS);
+  if (typeof updateInterval.unref === "function") updateInterval.unref();
 }
 
 function normalizeExcelFileName(fileName) {
@@ -272,6 +338,8 @@ function createWindow() {
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("The main window renderer process ended.", details);
   });
+
+  setupAutoUpdates(mainWindow);
 }
 
 app.whenReady().then(() => {
