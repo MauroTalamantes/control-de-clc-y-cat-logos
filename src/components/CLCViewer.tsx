@@ -19,6 +19,7 @@ import {
 
 interface CLCViewerProps {
   documents: CLCDocument[];
+  isLoading: boolean;
   onEdit: (doc: CLCDocument) => void;
   onDelete: (id: string) => void;
 }
@@ -28,7 +29,8 @@ type SortDirection = "asc" | "desc";
 type TooltipState = { text: string; left: number; top: number } | null;
 
 export default function CLCViewer({ 
-  documents, 
+  documents,
+  isLoading,
   onEdit, 
   onDelete
 }: CLCViewerProps) {
@@ -172,7 +174,11 @@ const handleDownloadSelectedPDF = () => {
           <div>
             <h2 className="text-base font-bold text-slate-800">Historial de Expedientes (CLC)</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Consulta, imprime, descarga o edita borradores. Mostrando <strong className="text-indigo-600 font-bold">{filteredDocs.length}</strong> de <strong className="text-slate-700">{documents.length}</strong> registros.
+              {isLoading ? (
+                "Cargando expedientes registrados..."
+              ) : (
+                <>Consulta, imprime, descarga o edita borradores. Mostrando <strong className="text-indigo-600 font-bold">{filteredDocs.length}</strong> de <strong className="text-slate-700">{documents.length}</strong> registros.</>
+              )}
             </p>
           </div>
           
@@ -292,18 +298,31 @@ const handleDownloadSelectedPDF = () => {
         </div>
 
         {/* List Content Table */}
-        {filteredDocs.length === 0 ? (
+        {isLoading ? (
+          <div className="p-16 text-center" role="status" aria-live="polite">
+            <div className="mx-auto h-2 w-32 animate-pulse rounded-full bg-slate-200" />
+            <p className="text-xs text-slate-500 font-semibold mt-4">Cargando historial de expedientes...</p>
+          </div>
+        ) : filteredDocs.length === 0 ? (
           <div className="p-16 text-center">
             <FileText className="h-12 w-12 text-slate-300 mx-auto stroke-1" />
             <p className="text-xs text-slate-500 font-semibold mt-3">No se encontraron expedientes con los criterios de búsqueda.</p>
             <p className="text-[11px] text-slate-400 mt-1">Intente cambiar el filtro o el término de búsqueda ingresado.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed text-left text-xs border-collapse">
+              <colgroup>
+                <col className="w-12" />
+                <col className="w-32" />
+                <col />
+                <col />
+                <col />
+                <col className="w-64" />
+              </colgroup>
               <thead>
                 <tr className="bg-[#f9fafb] border-b border-gray-100 text-[10px] font-bold text-slate-400 uppercase select-none tracking-wider">
-                  <th className="p-4 w-12 text-center">
+                  <th className="p-3 text-center">
                     <input
                       type="checkbox"
                       checked={areAllPageDocsSelected}
@@ -311,27 +330,27 @@ const handleDownloadSelectedPDF = () => {
                       className="h-4 w-4 cursor-pointer accent-indigo-600"
                     />
                   </th>
-                  <th onClick={() => handleSort("folio")} className="p-4 w-32 text-center cursor-pointer hover:text-slate-700">
-                    <span className="inline-flex items-center gap-1">
+                  <th onClick={() => handleSort("folio")} className="p-3 text-center cursor-pointer hover:text-slate-700">
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
                       Folio <span className="font-mono">{sortIndicator("folio")}</span>
                     </span>
                   </th>
-                  <th onClick={() => handleSort("nombre")} className="p-4 text-center cursor-pointer hover:text-slate-700">
+                  <th onClick={() => handleSort("nombre")} className="p-3 text-center cursor-pointer hover:text-slate-700">
                     <span className="inline-flex items-center gap-1">
                       Nombre <span className="font-mono">{sortIndicator("nombre")}</span>
                     </span>
                   </th>
-                  <th onClick={() => handleSort("concepto")} className="p-4 text-center cursor-pointer hover:text-slate-700">
+                  <th onClick={() => handleSort("concepto")} className="p-3 text-center cursor-pointer hover:text-slate-700">
                     <span className="inline-flex items-center gap-1">
                       Concepto de Gasto <span className="font-mono">{sortIndicator("concepto")}</span>
                     </span>
                   </th>
-                  <th onClick={() => handleSort("proveedor")} className="p-4 text-center cursor-pointer hover:text-slate-700">
+                  <th onClick={() => handleSort("proveedor")} className="p-3 text-center cursor-pointer hover:text-slate-700">
                     <span className="inline-flex items-center gap-1">
                       Proveedor (Nombre) <span className="font-mono">{sortIndicator("proveedor")}</span>
                     </span>
                   </th>
-                  <th className="p-4 text-center w-52">Acciones</th>
+                  <th className="p-3 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -348,7 +367,7 @@ const handleDownloadSelectedPDF = () => {
                       }`} 
                       onClick={() => setSelectedDocId(doc.id)}
                     >
-                      <td className="p-4 text-center align-middle" onClick={e => e.stopPropagation()}>
+                      <td className="p-3 text-center align-middle" onClick={e => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           checked={selectedDocumentIds.includes(doc.id)}
@@ -357,45 +376,45 @@ const handleDownloadSelectedPDF = () => {
                         />
                       </td>
                       {/* Folio */}
-                      <td className="p-4 align-middle">
+                      <td className="p-3 align-middle overflow-hidden">
                         <div className="space-y-1">
-                          <span className="font-mono font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full text-[10px]">
+                          <span className="inline-block max-w-full whitespace-nowrap font-mono font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full text-[10px]">
                             {doc.folio || "BORRADOR"}
                           </span>
                         </div>
                       </td>
 
                       {/* Unidad Administrativa */}
-                      <td className="p-4 align-top">
-                        <div className="space-y-1">
-                          <strong className="text-slate-800 font-bold block max-w-xs truncate" title={doc.unidadNombre}>
+                      <td className="p-3 align-top overflow-hidden">
+                        <div className="w-full min-w-0 space-y-1">
+                          <strong className="text-slate-800 font-bold block w-full truncate" title={doc.unidadNombre}>
                             {doc.unidadNombre}
                           </strong>
                         </div>
                       </td>
 
                       {/* Concepto de Gasto */}
-                      <td className="p-4 align-top">
-                        <div className="space-y-1 max-w-sm">
-                          <span className="font-extrabold text-slate-800 block truncate" title={getConceptName(doc)}>
+                      <td className="p-3 align-top overflow-hidden">
+                        <div className="w-full min-w-0 space-y-1">
+                          <span className="font-extrabold text-slate-800 block w-full truncate" title={getConceptName(doc)}>
                             {getConceptName(doc)}
                           </span>
-                          <span className="text-[10px] text-slate-500 font-medium block truncate uppercase leading-tight" title={getConceptKey(doc)}>
+                          <span className="text-[10px] text-slate-500 font-medium block w-full truncate uppercase leading-tight" title={getConceptKey(doc)}>
                             {getConceptKey(doc)}
                           </span>
                         </div>
                       </td>
 
                       {/* Proveedor */}
-                      <td className="p-4 align-middle font-extrabold text-slate-800 text-xs">
-                        <span className="block truncate" title={doc.proveedorNombre}>
+                      <td className="p-3 align-middle overflow-hidden font-extrabold text-slate-800 text-xs">
+                        <span className="block w-full truncate" title={doc.proveedorNombre}>
                           {doc.proveedorNombre}
                         </span>
                       </td>
 
                       {/* Actions */}
-                      <td className="p-4 align-middle" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1.5">
+                      <td className="p-2 align-middle whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
                           {/* Ver Formato */}
                           <div
                             className="relative"
@@ -404,29 +423,27 @@ const handleDownloadSelectedPDF = () => {
                           >
                             <button
                               onClick={() => setSelectedDocId(doc.id)}
-                              className="bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all flex items-center gap-1 cursor-pointer border border-indigo-150/40"
+                              className="bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white p-1.5 rounded-lg transition-all cursor-pointer border border-indigo-150/40"
                               aria-label="Ver previsualizacion"
                             >
-                              <Eye className="h-3.5 w-3.5" /> Ver
+                              <Eye className="h-4 w-4" />
                             </button>
                           </div>
 
                           {/* Editar */}
-                          {doc.estado === "borrador" && (
-                            <div
-                              className="relative"
-                              onMouseEnter={event => showTooltip(event, "Editar borrador")}
-                              onMouseLeave={() => setActiveTooltip(null)}
+                          <div
+                            className="relative"
+                            onMouseEnter={event => showTooltip(event, "Editar expediente")}
+                            onMouseLeave={() => setActiveTooltip(null)}
+                          >
+                            <button
+                              onClick={() => onEdit(doc)}
+                              className="bg-slate-100 hover:bg-amber-600 text-slate-700 hover:text-white p-1.5 rounded-lg transition-all cursor-pointer border border-slate-200"
+                              aria-label="Editar expediente"
                             >
-                              <button
-                                onClick={() => onEdit(doc)}
-                                className="bg-slate-100 hover:bg-amber-600 text-slate-700 hover:text-white px-2.5 py-1.5 rounded-lg font-bold text-xs transition-all flex items-center gap-1 cursor-pointer border border-slate-200"
-                                aria-label="Editar borrador"
-                              >
-                                <Edit className="h-3.5 w-3.5" /> Editar
-                              </button>
-                            </div>
-                          )}
+                              <Edit className="h-4 w-4" />
+                            </button>
+                          </div>
 
                           {/* Descargar Excel */}
                           <div
@@ -929,8 +946,6 @@ const handleDownloadSelectedPDF = () => {
     </div>
   );
 }
-
-
 
 
 

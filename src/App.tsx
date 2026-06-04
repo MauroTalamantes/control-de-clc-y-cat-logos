@@ -40,7 +40,8 @@ function getDocumentsFromPersistResult(result: { documents: CLCDocument[] } | CL
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("lista");
   const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
-  const [documents, setDocuments] = useState<CLCDocument[]>(INITIAL_DOCUMENTS);
+  const [documents, setDocuments] = useState<CLCDocument[]>([]);
+  const [isInitialDataLoading, setIsInitialDataLoading] = useState(true);
   const [editingDoc, setEditingDoc] = useState<CLCDocument | null>(null);
   const [storageMode, setStorageMode] = useState<StorageMode>("browser");
   const [catalogSyncStatus, setCatalogSyncStatus] = useState<CatalogSyncStatus>("loading");
@@ -71,6 +72,7 @@ export default function App() {
         setStorageMode(snapshot.storageMode);
         setCatalogSyncStatus("idle");
         setCatalogSyncError(null);
+        setIsInitialDataLoading(false);
         if (snapshot.storageMode === "supabase") {
           setSimulationLog(prev => [
             {
@@ -92,9 +94,12 @@ export default function App() {
         }
       })
       .catch(error => {
+        if (!isMounted) return;
         console.error("Error loading app data", error);
+        setDocuments(INITIAL_DOCUMENTS);
         setCatalogSyncStatus("error");
         setCatalogSyncError("No se pudo cargar la base de datos configurada.");
+        setIsInitialDataLoading(false);
         setSimulationLog(prev => [
           {
             time: new Date().toLocaleTimeString(),
@@ -177,9 +182,33 @@ export default function App() {
   // Safe document save operation
   const handleSaveDocument = async (doc: CLCDocument, finalize: boolean) => {
     let updatedDocs = [...documents];
-    const isEdit = updatedDocs.some(d => d.id === doc.id);
+    const existingDoc = updatedDocs.find(d => d.id === doc.id);
+    const isEdit = Boolean(existingDoc);
 
-    if (finalize) {
+    if (finalize && existingDoc?.estado === "finalizado") {
+      const updatedFinalizedDoc: CLCDocument = {
+        ...doc,
+        folio: existingDoc.folio,
+        estado: "finalizado",
+        fechaCreacion: existingDoc.fechaCreacion
+      };
+
+      updatedDocs = updatedDocs.map(d => d.id === doc.id ? updatedFinalizedDoc : d);
+      const persisted = await persistDocument(updatedFinalizedDoc, updatedDocs);
+      setDocuments(getDocumentsFromPersistResult(persisted));
+
+      const logTime = new Date().toLocaleTimeString();
+      setSimulationLog(prev => [
+        {
+          time: logTime,
+          text: `Expediente ${updatedFinalizedDoc.folio} actualizado para ${updatedFinalizedDoc.proveedorNombre}.`,
+          type: "info"
+        },
+        ...prev
+      ]);
+
+      alert(`Expediente ${updatedFinalizedDoc.folio} actualizado correctamente.`);
+    } else if (finalize) {
       const { finalizedDoc, documents: persistedDocs } = await finalizeAndPersistDocument(doc, documents);
       
       setDocuments(persistedDocs);
@@ -412,6 +441,7 @@ export default function App() {
         {viewMode === "lista" && (
           <CLCViewer
             documents={documents}
+            isLoading={isInitialDataLoading}
             onEdit={handleStartEdit}
             onDelete={handleDeleteDocument}
           />

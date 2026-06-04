@@ -1276,7 +1276,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
             disabled={isSubmitting}
             className="bg-indigo-600 hover:bg-indigo-700 text-white hover:shadow-md hover:shadow-indigo-650/15 text-xs font-black px-5 py-2.5 rounded-xl transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <Check className="h-4 w-4" /> {isSubmitting ? "Guardando..." : "Finalizar y Generar Folio Definitivo"}
+            <Check className="h-4 w-4" /> {isSubmitting
+              ? "Guardando..."
+              : documentToEdit?.estado === "finalizado"
+                ? "Guardar Cambios"
+                : "Finalizar y Generar Folio Definitivo"}
           </button>
         </div>
 
