@@ -23,6 +23,9 @@ importers:
       express:
         specifier: ^4.21.2
         version: 4.22.2
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       jspdf:
         specifier: ^4.2.1
         version: 4.2.1
