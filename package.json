@@ -27,6 +27,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "build/icon.ico",
+      "build/icon.png",
       "package.json"
     ],
     "directories": {
@@ -41,6 +43,7 @@
       }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         "nsis",

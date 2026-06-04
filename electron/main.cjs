@@ -18,6 +18,11 @@ if (process.platform === "win32") {
 }
 
 const isDev = !app.isPackaged;
+const appIconPath = path.join(__dirname, "..", "build", process.platform === "win32" ? "icon.ico" : "icon.png");
+
+if (process.platform === "win32") {
+  app.setAppUserModelId("mx.gob.guadalupe.control-clc");
+}
 
 function getDefaultDataPath() {
   return path.join(app.getPath("userData"), "clc-data.json");
@@ -310,6 +315,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 720,
     title: "Control de CLC y Catalogos",
+    icon: appIconPath,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),

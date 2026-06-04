@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   AppCatalogs, 
   AdministrativeUnit, 
@@ -17,7 +17,7 @@ import {
   CLCDocument,
   FolioCounter
 } from "../types";
-import { Plus, Trash2, Edit2, Check, X, ShieldAlert, BookOpen, Layers } from "lucide-react";
+import { Plus, Trash2, Edit2, Check, X, ShieldAlert, BookOpen, Layers, Search } from "lucide-react";
 import { AlertTriangle, CheckCircle2, Database, RefreshCw, Save } from "lucide-react";
 
 interface CatalogManagerProps {
@@ -34,6 +34,7 @@ interface CatalogManagerProps {
 
 type ActiveTab = "unidades" | "bancos" | "proveedores" | "presupuesto" | "firmas" | "folios";
 type NewRecordId = "new_unidad" | "new_banco_nombre" | "new_banco" | "new_proveedor" | "new_firma" | "new_f" | "new_pr" | "new_o";
+type BudgetSearchKey = "fuentes" | "proyectos" | "objetos";
 
 const RequiredMark = () => <span className="text-red-600 font-black" aria-hidden="true">*</span>;
 
@@ -67,6 +68,16 @@ export default function CatalogManager({
   const [fuenteForm, setFuenteForm] = useState<Partial<BudgetSource>>({});
   const [proyectoForm, setProyectoForm] = useState<Partial<BudgetProject>>({});
   const [objetoForm, setObjetoForm] = useState<Partial<ExpenseObject>>({});
+  const [activeBudgetSearch, setActiveBudgetSearch] = useState<BudgetSearchKey | null>(null);
+  const [budgetSearch, setBudgetSearch] = useState<Record<BudgetSearchKey, string>>({
+    fuentes: "",
+    proyectos: "",
+    objetos: ""
+  });
+  const openBudgetSearch = (key: BudgetSearchKey) => {
+    setBudgetSearch({ fuentes: "", proyectos: "", objetos: "" });
+    setActiveBudgetSearch(key);
+  };
   const defaultUnidadId = catalogs.defaultUnidadId || catalogs.unidades[0]?.id || "";
   const defaultUnidad = catalogs.unidades.find(u => u.id === defaultUnidadId) || catalogs.unidades[0];
   const bancoNombres = catalogs.bancoNombres?.length
@@ -90,6 +101,43 @@ export default function CatalogManager({
     error: { label: "Error", className: "bg-rose-50 text-rose-700 border-rose-100", icon: AlertTriangle }
   }[saveStatus];
   const StatusIcon = statusConfig.icon;
+  useEffect(() => {
+    if (!activeBudgetSearch) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-budget-search]")) return;
+
+      setBudgetSearch(prev => ({ ...prev, [activeBudgetSearch]: "" }));
+      setActiveBudgetSearch(null);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [activeBudgetSearch]);
+
+  const normalizeSearchText = (value: string | undefined) => {
+    return (value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  };
+
+  const budgetSearchMatches = (search: string, ...values: Array<string | undefined>) => {
+    const normalizedSearch = normalizeSearchText(search).trim();
+    if (!normalizedSearch) return true;
+    return values.some(value => normalizeSearchText(value).includes(normalizedSearch));
+  };
+
+  const filteredFuentes = catalogs.fuentes.filter(item =>
+    budgetSearchMatches(budgetSearch.fuentes, item.clave, item.descripcion)
+  );
+  const filteredProyectos = catalogs.proyectos.filter(item =>
+    budgetSearchMatches(budgetSearch.proyectos, item.clave, item.descripcion)
+  );
+  const filteredObjetos = catalogs.objetos.filter(item =>
+    budgetSearchMatches(budgetSearch.objetos, item.clave, item.nombre)
+  );
   const highestExistingFolio = documents
     .filter(document => document.año === folioYear && document.estado === "finalizado")
     .reduce((max, document) => {
@@ -945,14 +993,37 @@ export default function CatalogManager({
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* FUENTES */}
               <div className="space-y-3">
-                <div className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                <div data-budget-search className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                   <h3 className="text-xs font-bold text-gray-700">Fuentes de Financiamiento</h3>
-                  {editingId !== "new_f" && (
-                    <button onClick={() => { setEditingId("new_f"); setFuenteForm({ clave: "", descripcion: "" }); }} className="text-indigo-700 font-semibold hover:text-indigo-800 text-[11px] flex items-center gap-0.5 cursor-pointer">
-                      <Plus className="h-3 w-3" /> Agregar
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => openBudgetSearch("fuentes")}
+                      className="text-gray-400 hover:text-indigo-700 p-1 rounded-md hover:bg-indigo-50 cursor-pointer"
+                      title="Buscar"
+                    >
+                      <Search className="h-3.5 w-3.5" />
                     </button>
-                  )}
+                    {editingId !== "new_f" && (
+                      <button onClick={() => { setEditingId("new_f"); setFuenteForm({ clave: "", descripcion: "" }); }} className="text-indigo-700 font-semibold hover:text-indigo-800 text-[11px] flex items-center gap-0.5 cursor-pointer">
+                        <Plus className="h-3 w-3" /> Agregar
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {activeBudgetSearch === "fuentes" && (
+                  <div data-budget-search className="relative">
+                    <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                    <input
+                      autoFocus
+                      type="search"
+                      value={budgetSearch.fuentes}
+                      onChange={e => setBudgetSearch(prev => ({ ...prev, fuentes: e.target.value }))}
+                      placeholder="Buscar por clave o descripcion"
+                      className="w-full rounded-lg border border-indigo-100 bg-white py-1.5 pl-7 pr-2 text-[11px] text-gray-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-50"
+                    />
+                  </div>
+                )}
 
                 {false && editingId === "new_f" && (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 space-y-2 text-xs">
@@ -976,7 +1047,7 @@ export default function CatalogManager({
                 )}
 
                 <div className="border border-gray-100 rounded-lg overflow-y-auto max-h-60">
-                  {catalogs.fuentes.map(item => (
+                  {filteredFuentes.map(item => (
                     <div key={item.id} className="p-2 border-b border-gray-50 flex justify-between items-center hover:bg-gray-50/50">
                       {editingId === item.id ? (
                         <>
@@ -1003,19 +1074,45 @@ export default function CatalogManager({
                       )}
                     </div>
                   ))}
+                  {filteredFuentes.length === 0 && (
+                    <div className="p-3 text-center text-[11px] text-gray-400">Sin resultados</div>
+                  )}
                 </div>
               </div>
 
               {/* PROYECTOS */}
               <div className="space-y-3">
-                <div className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                <div data-budget-search className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                   <h3 className="text-xs font-bold text-gray-700">Proyectos / Programas</h3>
-                  {editingId !== "new_pr" && (
-                    <button onClick={() => { setEditingId("new_pr"); setProyectoForm({ clave: "", descripcion: "" }); }} className="text-indigo-700 font-semibold hover:text-indigo-800 text-[11px] flex items-center gap-0.5 cursor-pointer">
-                      <Plus className="h-3 w-3" /> Agregar
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => openBudgetSearch("proyectos")}
+                      className="text-gray-400 hover:text-indigo-700 p-1 rounded-md hover:bg-indigo-50 cursor-pointer"
+                      title="Buscar"
+                    >
+                      <Search className="h-3.5 w-3.5" />
                     </button>
-                  )}
+                    {editingId !== "new_pr" && (
+                      <button onClick={() => { setEditingId("new_pr"); setProyectoForm({ clave: "", descripcion: "" }); }} className="text-indigo-700 font-semibold hover:text-indigo-800 text-[11px] flex items-center gap-0.5 cursor-pointer">
+                        <Plus className="h-3 w-3" /> Agregar
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {activeBudgetSearch === "proyectos" && (
+                  <div data-budget-search className="relative">
+                    <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                    <input
+                      autoFocus
+                      type="search"
+                      value={budgetSearch.proyectos}
+                      onChange={e => setBudgetSearch(prev => ({ ...prev, proyectos: e.target.value }))}
+                      placeholder="Buscar por clave o descripcion"
+                      className="w-full rounded-lg border border-indigo-100 bg-white py-1.5 pl-7 pr-2 text-[11px] text-gray-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-50"
+                    />
+                  </div>
+                )}
 
                 {false && editingId === "new_pr" && (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 space-y-2 text-xs">
@@ -1039,7 +1136,7 @@ export default function CatalogManager({
                 )}
 
                 <div className="border border-gray-100 rounded-lg overflow-y-auto max-h-60">
-                  {catalogs.proyectos.map(item => (
+                  {filteredProyectos.map(item => (
                     <div key={item.id} className="p-2 border-b border-gray-50 flex justify-between items-center hover:bg-gray-50/50">
                       {editingId === item.id ? (
                         <>
@@ -1066,19 +1163,45 @@ export default function CatalogManager({
                       )}
                     </div>
                   ))}
+                  {filteredProyectos.length === 0 && (
+                    <div className="p-3 text-center text-[11px] text-gray-400">Sin resultados</div>
+                  )}
                 </div>
               </div>
 
               {/* OBJETOS DEL GASTO */}
               <div className="space-y-3">
-                <div className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                <div data-budget-search className="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                   <h3 className="text-xs font-bold text-gray-700">Objetos del Gasto (Categorías)</h3>
-                  {editingId !== "new_o" && (
-                    <button onClick={() => { setEditingId("new_o"); setObjetoForm({ clave: "", nombre: "" }); }} className="text-indigo-700 font-semibold hover:text-indigo-800 text-[11px] flex items-center gap-0.5 cursor-pointer">
-                      <Plus className="h-3 w-3" /> Agregar
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => openBudgetSearch("objetos")}
+                      className="text-gray-400 hover:text-indigo-700 p-1 rounded-md hover:bg-indigo-50 cursor-pointer"
+                      title="Buscar"
+                    >
+                      <Search className="h-3.5 w-3.5" />
                     </button>
-                  )}
+                    {editingId !== "new_o" && (
+                      <button onClick={() => { setEditingId("new_o"); setObjetoForm({ clave: "", nombre: "" }); }} className="text-indigo-700 font-semibold hover:text-indigo-800 text-[11px] flex items-center gap-0.5 cursor-pointer">
+                        <Plus className="h-3 w-3" /> Agregar
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {activeBudgetSearch === "objetos" && (
+                  <div data-budget-search className="relative">
+                    <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                    <input
+                      autoFocus
+                      type="search"
+                      value={budgetSearch.objetos}
+                      onChange={e => setBudgetSearch(prev => ({ ...prev, objetos: e.target.value }))}
+                      placeholder="Buscar por clave o nombre"
+                      className="w-full rounded-lg border border-indigo-100 bg-white py-1.5 pl-7 pr-2 text-[11px] text-gray-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-50"
+                    />
+                  </div>
+                )}
 
                 {false && editingId === "new_o" && (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 space-y-2 text-xs">
@@ -1102,7 +1225,7 @@ export default function CatalogManager({
                 )}
 
                 <div className="border border-gray-100 rounded-lg overflow-y-auto max-h-60">
-                  {catalogs.objetos.map(item => (
+                  {filteredObjetos.map(item => (
                     <div key={item.id} className="p-2 border-b border-gray-50 flex justify-between items-center hover:bg-gray-50/50">
                       {editingId === item.id ? (
                         <>
@@ -1129,6 +1252,9 @@ export default function CatalogManager({
                       )}
                     </div>
                   ))}
+                  {filteredObjetos.length === 0 && (
+                    <div className="p-3 text-center text-[11px] text-gray-400">Sin resultados</div>
+                  )}
                 </div>
               </div>
             </div>
