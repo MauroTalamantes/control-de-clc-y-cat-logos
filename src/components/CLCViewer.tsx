@@ -138,6 +138,23 @@ export default function CLCViewer({
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStart = (safeCurrentPage - 1) * pageSize;
   const paginatedDocs = sortedDocs.slice(pageStart, pageStart + pageSize);
+
+  const selectedDocs = documents.filter(doc => selectedDocumentIds.includes(doc.id));
+
+const areAllPageDocsSelected =
+  paginatedDocs.length > 0 &&
+  paginatedDocs.every(doc => selectedDocumentIds.includes(doc.id));
+
+const handleDownloadSelectedExcel = () => {
+  selectedDocs.forEach(doc => downloadDocExcel(doc));
+  setSelectedDocumentIds([]);
+};
+
+const handleDownloadSelectedPDF = () => {
+  selectedDocs.forEach(doc => downloadDocPDF(doc));
+  setSelectedDocumentIds([]);
+};
+
   const firstVisible = sortedDocs.length === 0 ? 0 : pageStart + 1;
   const lastVisible = Math.min(pageStart + pageSize, sortedDocs.length);
 
@@ -162,23 +179,26 @@ export default function CLCViewer({
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
             {/* Download Selected Button */}
             {selectedDocumentIds.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  selectedDocumentIds.forEach(docId => {
-                    const doc = documents.find(d => d.id === docId);
-                    if (doc) {
-                      downloadDocExcel(doc);
-                    }
-                  });
-                  setSelectedDocumentIds([]); // Clear selection after download
-                }}
-                className="bg-indigo-600 text-white rounded-lg px-4 py-2 text-xs font-semibold hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-hidden transition-all flex items-center justify-center gap-2"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                Descargar seleccionados ({selectedDocumentIds.length})
-              </button>
-            )}
+  <div className="flex items-center gap-2">
+    <button
+      type="button"
+      onClick={handleDownloadSelectedExcel}
+      className="bg-emerald-600 text-white rounded-lg px-4 py-2 text-xs font-semibold hover:bg-emerald-700 transition-all flex items-center justify-center gap-2"
+    >
+      <FileSpreadsheet className="w-4 h-4" />
+      Excel ({selectedDocumentIds.length})
+    </button>
+
+    <button
+      type="button"
+      onClick={handleDownloadSelectedPDF}
+      className="bg-red-600 text-white rounded-lg px-4 py-2 text-xs font-semibold hover:bg-red-700 transition-all flex items-center justify-center gap-2"
+    >
+      <FileText className="w-4 h-4" />
+      PDF ({selectedDocumentIds.length})
+    </button>
+  </div>
+)}
             {/* Search Input */}
             <div className="relative flex-1">
               <input
@@ -283,6 +303,14 @@ export default function CLCViewer({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-[#f9fafb] border-b border-gray-100 text-[10px] font-bold text-slate-400 uppercase select-none tracking-wider">
+                  <th className="p-4 w-12 text-center">
+                    <input
+                      type="checkbox"
+                      checked={areAllPageDocsSelected}
+                      onChange={e => handleSelectAllDocs(e.target.checked)}
+                      className="h-4 w-4 cursor-pointer accent-indigo-600"
+                    />
+                  </th>
                   <th onClick={() => handleSort("folio")} className="p-4 w-32 text-center cursor-pointer hover:text-slate-700">
                     <span className="inline-flex items-center gap-1">
                       Folio <span className="font-mono">{sortIndicator("folio")}</span>
@@ -320,6 +348,14 @@ export default function CLCViewer({
                       }`} 
                       onClick={() => setSelectedDocId(doc.id)}
                     >
+                      <td className="p-4 text-center align-middle" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedDocumentIds.includes(doc.id)}
+                          onChange={e => handleSelectDoc(doc.id, e.target.checked)}
+                          className="h-4 w-4 cursor-pointer accent-indigo-600"
+                        />
+                      </td>
                       {/* Folio */}
                       <td className="p-4 align-middle">
                         <div className="space-y-1">
