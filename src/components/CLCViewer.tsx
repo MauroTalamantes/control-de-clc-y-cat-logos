@@ -14,7 +14,8 @@ import {
   Trash2, 
   Eye, 
   X,
-  Printer
+  Printer,
+  Loader2
 } from "lucide-react";
 
 interface CLCViewerProps {
@@ -27,6 +28,7 @@ interface CLCViewerProps {
 type SortKey = "fecha" | "folio" | "nombre" | "concepto" | "proveedor";
 type SortDirection = "asc" | "desc";
 type TooltipState = { text: string; left: number; top: number } | null;
+type ExportAction = { docId: string; type: "excel" | "pdf" } | null;
 
 export default function CLCViewer({ 
   documents,
@@ -49,12 +51,33 @@ export default function CLCViewer({
   const [officialPreviewStatus, setOfficialPreviewStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [officialPreviewError, setOfficialPreviewError] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+  const [activeExport, setActiveExport] = useState<ExportAction>(null);
   const dateFilterRef = useRef<HTMLDivElement>(null);
   const officialPreviewCacheRef = useRef<Map<string, string>>(new Map());
 
   const openPreview = (docId: string) => {
     setPreviewMode("datos");
     setSelectedDocId(docId);
+  };
+
+  const handleDownloadExcel = async (doc: CLCDocument) => {
+    if (activeExport) return;
+    setActiveExport({ docId: doc.id, type: "excel" });
+    try {
+      await downloadDocExcel(doc, { openAfterSave: true });
+    } finally {
+      setActiveExport(null);
+    }
+  };
+
+  const handleDownloadPDF = async (doc: CLCDocument) => {
+    if (activeExport) return;
+    setActiveExport({ docId: doc.id, type: "pdf" });
+    try {
+      await downloadDocPDF(doc, { openAfterSave: true });
+    } finally {
+      setActiveExport(null);
+    }
   };
 
   const handleSelectDoc = (docId: string, isChecked: boolean) => {
@@ -530,11 +553,16 @@ const handleDownloadSelectedPDF = async () => {
                             onMouseLeave={() => setActiveTooltip(null)}
                           >
                             <button
-                              onClick={() => downloadDocExcel(doc)}
-                              className="bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white p-1.5 rounded-lg transition-all border border-emerald-100 cursor-pointer"
+                              onClick={() => handleDownloadExcel(doc)}
+                              disabled={Boolean(activeExport)}
+                              className="bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white p-1.5 rounded-lg transition-all border border-emerald-100 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-emerald-50 disabled:hover:text-emerald-700"
                               aria-label="Descargar Excel"
                             >
-                              <FileSpreadsheet className="h-4 w-4" />
+                              {activeExport?.docId === doc.id && activeExport.type === "excel" ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <FileSpreadsheet className="h-4 w-4" />
+                              )}
                             </button>
                           </div>
 
@@ -545,11 +573,16 @@ const handleDownloadSelectedPDF = async () => {
                             onMouseLeave={() => setActiveTooltip(null)}
                           >
                             <button
-                              onClick={() => downloadDocPDF(doc)}
-                              className="bg-red-50 hover:bg-red-700 text-red-700 hover:text-white p-1.5 rounded-lg transition-all border border-red-100 hover:border-red-700 cursor-pointer"
+                              onClick={() => handleDownloadPDF(doc)}
+                              disabled={Boolean(activeExport)}
+                              className="bg-red-50 hover:bg-red-700 text-red-700 hover:text-white p-1.5 rounded-lg transition-all border border-red-100 hover:border-red-700 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-red-50 disabled:hover:text-red-700 disabled:hover:border-red-100"
                               aria-label="Descargar PDF"
                             >
-                              <FileText className="h-4 w-4" />
+                              {activeExport?.docId === doc.id && activeExport.type === "pdf" ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <FileText className="h-4 w-4" />
+                              )}
                             </button>
                           </div>
 

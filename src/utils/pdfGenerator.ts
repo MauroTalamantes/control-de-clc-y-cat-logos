@@ -21,11 +21,11 @@ export async function createDocPDFPreviewUrl(doc: CLCDocument) {
   return URL.createObjectURL(blob);
 }
 
-export async function downloadDocPDF(doc: CLCDocument) {
+export async function downloadDocPDF(doc: CLCDocument, options: { openAfterSave?: boolean } = {}) {
   try {
     const clcFile = requireDesktopPdfSupport();
     const excelBuffer = await generateExcelBuffer(doc);
-    await clcFile.savePdf(`${getDocExportBaseName(doc)}.pdf`, excelBuffer);
+    await clcFile.savePdf(`${getDocExportBaseName(doc)}.pdf`, excelBuffer, options);
   } catch (error) {
     console.error("Error generating official PDF file", error);
     alert(error instanceof Error ? error.message : "No se pudo generar el PDF con el formato oficial.");

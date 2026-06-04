@@ -4,6 +4,11 @@ export {};
 
 declare global {
   interface Window {
+    clcDialog?: {
+      alert: (message?: unknown) => true;
+      confirm: (message?: unknown) => boolean;
+      prompt: (message?: unknown, defaultValue?: string) => string | null;
+    };
     clcStore?: {
       get: () => Promise<{
         catalogs: AppCatalogs | null;
@@ -49,7 +54,7 @@ declare global {
       createPdf: (bytes: Uint8Array) => Promise<{
         bytes: Uint8Array;
       }>;
-      savePdf: (fileName: string, bytes: Uint8Array) => Promise<{
+      savePdf: (fileName: string, bytes: Uint8Array, options?: { openAfterSave?: boolean }) => Promise<{
         canceled: boolean;
         filePath?: string;
       }>;

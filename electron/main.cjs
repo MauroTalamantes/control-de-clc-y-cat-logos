@@ -26,6 +26,21 @@ function repaintWindow(window) {
   }
 }
 
+function getDialogWindow(event) {
+  return BrowserWindow.fromWebContents(event.sender) || undefined;
+}
+
+function normalizeDialogMessage(message) {
+  return typeof message === "string" ? message : String(message ?? "");
+}
+
+function showMessageBoxSyncForEvent(event, options) {
+  const parentWindow = getDialogWindow(event);
+  return parentWindow
+    ? dialog.showMessageBoxSync(parentWindow, options)
+    : dialog.showMessageBoxSync(options);
+}
+
 function normalizeExcelFileName(fileName) {
   const rawName = typeof fileName === "string" ? fileName.replace(/\.xlsx$/i, "") : "CLC";
   const safeName = rawName
@@ -254,9 +269,33 @@ function createWindow() {
     console.info("The main window renderer became responsive again.");
     repaintWindow(mainWindow);
   });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("The main window renderer process ended.", details);
+  });
 }
 
 app.whenReady().then(() => {
+  ipcMain.on("clc-dialog:alert", (event, message) => {
+    showMessageBoxSyncForEvent(event, {
+      type: "info",
+      buttons: ["Aceptar"],
+      defaultId: 0,
+      message: normalizeDialogMessage(message)
+    });
+    event.returnValue = true;
+  });
+
+  ipcMain.on("clc-dialog:confirm", (event, message) => {
+    const selectedButton = showMessageBoxSyncForEvent(event, {
+      type: "question",
+      buttons: ["Cancelar", "Aceptar"],
+      cancelId: 0,
+      defaultId: 1,
+      message: normalizeDialogMessage(message)
+    });
+    event.returnValue = selectedButton === 1;
+  });
+
   ipcMain.handle("clc-store:get", () => readStore());
 
   ipcMain.handle("clc-store:save-catalogs", (_event, catalogs) => {
@@ -364,6 +403,10 @@ app.whenReady().then(() => {
       ? result.filePath
       : `${result.filePath}.pdf`;
     await fs.promises.writeFile(filePath, pdfBuffer);
+    if (payload?.openAfterSave) {
+      const openError = await shell.openPath(filePath);
+      if (openError) throw new Error(openError);
+    }
     return { canceled: false, filePath };
   });
 
