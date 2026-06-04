@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 
 type ViewMode = "lista" | "catalogos" | "crear";
+type StorageMode = "supabase" | "electron" | "browser";
+type CatalogSyncStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
 function getDocumentsFromPersistResult(result: { documents: CLCDocument[] } | CLCDocument[]): CLCDocument[] {
   return Array.isArray(result) ? result : result.documents;
@@ -40,6 +42,9 @@ export default function App() {
   const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
   const [documents, setDocuments] = useState<CLCDocument[]>(INITIAL_DOCUMENTS);
   const [editingDoc, setEditingDoc] = useState<CLCDocument | null>(null);
+  const [storageMode, setStorageMode] = useState<StorageMode>("browser");
+  const [catalogSyncStatus, setCatalogSyncStatus] = useState<CatalogSyncStatus>("loading");
+  const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
 
   // Concurrency Simulation Logs list
   const [simulationLog, setSimulationLog] = useState<{ time: string; text: string; type: "info" | "success" | "warning" }[]>([
@@ -63,11 +68,14 @@ export default function App() {
         if (!isMounted) return;
         setCatalogs(snapshot.catalogs);
         setDocuments(snapshot.documents);
+        setStorageMode(snapshot.storageMode);
+        setCatalogSyncStatus("idle");
+        setCatalogSyncError(null);
         if (snapshot.storageMode === "supabase") {
           setSimulationLog(prev => [
             {
               time: new Date().toLocaleTimeString(),
-              text: "Base central Supabase activa. Folios y expedientes se guardan en Postgres.",
+              text: "Base central Supabase activa. Folios, expedientes y catalogos se guardan en Postgres.",
               type: "info"
             },
             ...prev
@@ -85,6 +93,8 @@ export default function App() {
       })
       .catch(error => {
         console.error("Error loading app data", error);
+        setCatalogSyncStatus("error");
+        setCatalogSyncError("No se pudo cargar la base de datos configurada.");
         setSimulationLog(prev => [
           {
             time: new Date().toLocaleTimeString(),
@@ -100,18 +110,68 @@ export default function App() {
     };
   }, []);
 
-  // Sync Catalogs list
-  const handleCatalogsChange = (updated: AppCatalogs) => {
+  const persistCatalogChanges = async (
+    updated: AppCatalogs,
+    options: { rethrow?: boolean; showAlert?: boolean } = {}
+  ): Promise<AppCatalogs> => {
+    const { rethrow = false, showAlert = true } = options;
     setCatalogs(updated);
-    persistCatalogs(updated).then(result => {
+    setCatalogSyncStatus("saving");
+    setCatalogSyncError(null);
+
+    try {
+      const result = await persistCatalogs(updated);
       if (result) {
         setCatalogs(result.catalogs);
         setDocuments(result.documents);
+        setStorageMode(result.storageMode);
+        setCatalogSyncStatus("saved");
+        return result.catalogs;
       }
-    }).catch(error => {
+      setCatalogSyncStatus("saved");
+      return updated;
+    } catch (error) {
       console.error("Error saving catalogs", error);
-      alert("No se pudieron guardar los catalogos.");
-    });
+      setCatalogSyncStatus("error");
+      setCatalogSyncError(error instanceof Error ? error.message : "No se pudieron guardar los catalogos.");
+      if (showAlert) {
+        alert("No se pudieron guardar los catalogos.");
+      }
+      if (rethrow) {
+        throw error;
+      }
+      return updated;
+    }
+  };
+
+  // Sync Catalogs list
+  const handleCatalogsChange = (updated: AppCatalogs) => {
+    void persistCatalogChanges(updated);
+  };
+
+  const handleReloadCatalogs = async () => {
+    setCatalogSyncStatus("loading");
+    setCatalogSyncError(null);
+    try {
+      const snapshot = await loadAppData();
+      setCatalogs(snapshot.catalogs);
+      setDocuments(snapshot.documents);
+      setStorageMode(snapshot.storageMode);
+      setCatalogSyncStatus("idle");
+      setSimulationLog(prev => [
+        {
+          time: new Date().toLocaleTimeString(),
+          text: "Catalogos recargados desde el almacenamiento activo.",
+          type: "info"
+        },
+        ...prev
+      ]);
+    } catch (error) {
+      console.error("Error reloading catalogs", error);
+      setCatalogSyncStatus("error");
+      setCatalogSyncError(error instanceof Error ? error.message : "No se pudieron recargar los catalogos.");
+      alert("No se pudieron recargar los catalogos.");
+    }
   };
 
   // Safe document save operation
@@ -361,6 +421,10 @@ export default function App() {
           <CatalogManager
             catalogs={catalogs}
             onChange={handleCatalogsChange}
+            storageMode={storageMode}
+            saveStatus={catalogSyncStatus}
+            saveError={catalogSyncError}
+            onReload={handleReloadCatalogs}
           />
         )}
 
@@ -369,6 +433,7 @@ export default function App() {
             catalogs={catalogs}
             onCancel={() => { setViewMode("lista"); setEditingDoc(null); }}
             onSave={handleSaveDocument}
+            onCatalogsChange={updated => persistCatalogChanges(updated, { rethrow: true, showAlert: false })}
             documentToEdit={editingDoc}
           />
         )}

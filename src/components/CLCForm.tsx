@@ -16,7 +16,8 @@ import { Plus, Trash, Check, AlertTriangle, Calculator, FileText, ChevronRight, 
 
 interface CLCFormProps {
   catalogs: AppCatalogs;
-  onSave: (doc: CLCDocument, finalize: boolean) => void;
+  onSave: (doc: CLCDocument, finalize: boolean) => void | Promise<void>;
+  onCatalogsChange: (updated: AppCatalogs) => void | Promise<AppCatalogs>;
   onCancel: () => void;
   documentToEdit?: CLCDocument | null;
 }
@@ -48,7 +49,7 @@ interface BudgetPickerOption {
   searchText: string;
 }
 
-export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: CLCFormProps) {
+export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, documentToEdit }: CLCFormProps) {
   // Setup standard state
   const [año, setAño] = useState<number>(2026);
   const [selectedUnidadId, setSelectedUnidadId] = useState<string>("");
@@ -74,6 +75,7 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
   const [proyectoSearch, setProyectoSearch] = useState<Record<string, string>>({});
   const [objetoSearch, setObjetoSearch] = useState<Record<string, string>>({});
   const [openBudgetPicker, setOpenBudgetPicker] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const initializedNewFormRef = useRef(false);
 
   useEffect(() => {
@@ -106,6 +108,105 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
   const formatCurrencyInput = (value: number) => {
     if (!value) return "";
     return value.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  };
+
+  const normalizeCatalogText = (value: string) => value.trim().replace(/\s+/g, " ").toUpperCase();
+
+  const createCatalogId = (prefix: string) => `${prefix}_${Math.random().toString(36).substr(2, 9)}`;
+
+  const getDefaultBanco = () => catalogs.bancos[0] || null;
+
+  const restoreBankDraft = (draft: SavedCLCFormDraft) => {
+    if (draft.selectedBancoId === "custom") {
+      setSelectedBancoId("custom");
+      setCustomBancoNombre(draft.customBancoNombre || "");
+      setBancoCuenta(draft.bancoCuenta || "");
+      setBancoClabe(draft.bancoClabe || "");
+      return;
+    }
+
+    const selectedBank = catalogs.bancos.find(b => b.id === draft.selectedBancoId) || getDefaultBanco();
+    setSelectedBancoId(selectedBank?.id || "");
+    setCustomBancoNombre("");
+    setBancoCuenta(selectedBank?.cuenta || "");
+    setBancoClabe(selectedBank?.clabe || "");
+  };
+
+  const restoreProviderDraft = (draft: SavedCLCFormDraft) => {
+    if (draft.selectedProveedorId === "custom") {
+      setSelectedProveedorId("custom");
+      setCustomProveedorNombre(draft.customProveedorNombre || "");
+      setProveedorRfc(draft.proveedorRfc || "");
+      return;
+    }
+
+    const selectedProvider = catalogs.proveedores.find(p => p.id === draft.selectedProveedorId);
+    setSelectedProveedorId(selectedProvider?.id || "");
+    setCustomProveedorNombre("");
+    setProveedorRfc(selectedProvider?.rfc || "");
+  };
+
+  const withManualCatalogRecords = (bancoNombre: string, proveedorNombre: string): AppCatalogs | null => {
+    let nextCatalogs = catalogs;
+    let changed = false;
+
+    if (selectedBancoId === "custom") {
+      const normalizedBankName = normalizeCatalogText(bancoNombre);
+      const normalizedCuenta = bancoCuenta.trim();
+      const normalizedClabe = bancoClabe.trim();
+      const bancoNombres = nextCatalogs.bancoNombres || [];
+      const bankNameExists = bancoNombres.some(b => normalizeCatalogText(b.nombre) === normalizedBankName);
+      const bankAccountExists = nextCatalogs.bancos.some(b => {
+        const sameClabe = normalizedClabe && b.clabe.trim() === normalizedClabe;
+        const sameAccount = normalizeCatalogText(b.nombre) === normalizedBankName && b.cuenta.trim() === normalizedCuenta;
+        return sameClabe || sameAccount;
+      });
+
+      if (!bankNameExists || !bankAccountExists) {
+        nextCatalogs = {
+          ...nextCatalogs,
+          bancoNombres: bankNameExists
+            ? bancoNombres
+            : [...bancoNombres, { id: createCatalogId("bn"), nombre: normalizedBankName }],
+          bancos: bankAccountExists
+            ? nextCatalogs.bancos
+            : [
+                ...nextCatalogs.bancos,
+                {
+                  id: createCatalogId("b"),
+                  nombre: normalizedBankName,
+                  cuenta: normalizedCuenta,
+                  clabe: normalizedClabe
+                }
+              ]
+        };
+        changed = true;
+      }
+    }
+
+    if (selectedProveedorId === "custom") {
+      const normalizedProviderName = normalizeCatalogText(proveedorNombre);
+      const normalizedRfc = normalizeCatalogText(proveedorRfc);
+      const providerExists = nextCatalogs.proveedores.some(p => (
+        normalizeCatalogText(p.rfc) === normalizedRfc ||
+        normalizeCatalogText(p.nombre) === normalizedProviderName
+      ));
+
+      if (!providerExists) {
+        const newProvider: Provider = {
+          id: createCatalogId("p"),
+          nombre: normalizedProviderName,
+          rfc: normalizedRfc
+        };
+        nextCatalogs = {
+          ...nextCatalogs,
+          proveedores: [...nextCatalogs.proveedores, newProvider]
+        };
+        changed = true;
+      }
+    }
+
+    return changed ? nextCatalogs : null;
   };
 
   // Initialize form
@@ -150,14 +251,10 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
           const shouldContinue = window.confirm("Dejaste una Cuenta por Liquidar Certificada a medias. ¿Quieres continuar con esa captura?");
           if (shouldContinue) {
             setAño(draft.anio || 2026);
-            setSelectedUnidadId(draft.selectedUnidadId || catalogs.defaultUnidadId || catalogs.unidades[0]?.id || "");
-            setSelectedBancoId(draft.selectedBancoId || catalogs.bancos[0]?.id || "");
-            setBancoCuenta(draft.bancoCuenta || "");
-            setBancoClabe(draft.bancoClabe || "");
-            setSelectedProveedorId(draft.selectedProveedorId || "");
-            setProveedorRfc(draft.proveedorRfc || "");
-            setCustomProveedorNombre(draft.customProveedorNombre || "");
-            setCustomBancoNombre(draft.customBancoNombre || "");
+            const selectedUnit = catalogs.unidades.find(u => u.id === draft.selectedUnidadId);
+            setSelectedUnidadId(selectedUnit?.id || catalogs.defaultUnidadId || catalogs.unidades[0]?.id || "");
+            restoreBankDraft(draft);
+            restoreProviderDraft(draft);
             setItems(draft.items?.length ? draft.items : [createEmptyItem()]);
             setConcepto(draft.concepto || "");
             setSelectedSolicitaId(draft.selectedSolicitaId || "");
@@ -175,12 +272,9 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
       if (catalogs.unidades.length > 0) {
         setSelectedUnidadId(catalogs.defaultUnidadId || catalogs.unidades[0].id);
       }
-      if (catalogs.bancos.length > 0) {
-        const firstB = catalogs.bancos[0];
-        setSelectedBancoId(firstB.id);
-        setBancoCuenta(firstB.cuenta);
-        setBancoClabe(firstB.clabe);
-      }
+      setSelectedBancoId("");
+      setBancoCuenta("");
+      setBancoClabe("");
       setSelectedProveedorId("");
       setProveedorRfc("");
       setCustomProveedorNombre("");
@@ -209,7 +303,14 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
       selectedProveedorId !== "" ||
       proveedorRfc.trim() !== "" ||
       customProveedorNombre.trim() !== "" ||
-      customBancoNombre.trim() !== "" ||
+      (
+        selectedBancoId === "custom" &&
+        (
+          customBancoNombre.trim() !== "" ||
+          bancoCuenta.trim() !== "" ||
+          bancoClabe.trim() !== ""
+        )
+      ) ||
       items.some(item =>
         item.numFactura.trim() !== "" ||
         item.oc.trim() !== "" ||
@@ -269,7 +370,8 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
 
   const handleBancoChange = (id: string) => {
     setSelectedBancoId(id);
-    if (id === "custom") {
+    setCustomBancoNombre("");
+    if (!id || id === "custom") {
       setBancoCuenta("");
       setBancoClabe("");
     } else {
@@ -283,6 +385,7 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
 
   const handleProveedorChange = (id: string) => {
     setSelectedProveedorId(id);
+    setCustomProveedorNombre("");
     if (id === "custom") {
       setProveedorRfc("");
     } else {
@@ -298,10 +401,10 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
     return {
       id: "item_" + Math.random().toString(36).substr(2, 9),
       oc: "",
-      fuenteClave: catalogs.fuentes[0]?.clave || "",
-      proyectoClave: catalogs.proyectos[0]?.clave || "",
-      objetoClave: catalogs.objetos[0]?.clave || "",
-      objetoNombre: catalogs.objetos[0]?.nombre || "",
+      fuenteClave: "",
+      proyectoClave: "",
+      objetoClave: "",
+      objetoNombre: "",
       numFactura: "",
       fechaFactura: "",
       subTotal: 0,
@@ -399,7 +502,9 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
   }, [items, documentToEdit]);
 
   // Handle submit logic
-  const handleSubmit = (finalize: boolean) => {
+  const handleSubmit = async (finalize: boolean) => {
+    if (isSubmitting) return;
+
     const unidadeObj = catalogs.unidades.find(u => u.id === selectedUnidadId);
     if (!unidadeObj) {
       alert("Error: Selecciona una Unidad Administrativa válida.");
@@ -510,8 +615,21 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
       estado: finalize ? "finalizado" : "borrador"
     };
 
-    localStorage.removeItem(FORM_AUTOSAVE_KEY);
-    onSave(doc, finalize);
+    const updatedCatalogs = withManualCatalogRecords(bancoNom, provNom);
+
+    setIsSubmitting(true);
+    try {
+      if (updatedCatalogs) {
+        await onCatalogsChange(updatedCatalogs);
+      }
+      localStorage.removeItem(FORM_AUTOSAVE_KEY);
+      await onSave(doc, finalize);
+    } catch (error) {
+      console.error("Error saving CLC with related catalogs", error);
+      alert("No se pudo guardar la CLC con el banco o proveedor en la base de datos.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const renderBudgetPicker = (
@@ -668,6 +786,7 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
                   onChange={e => handleBancoChange(e.target.value)}
                   className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                 >
+                  <option value="">Selecciona institución bancaria...</option>
                   {catalogs.bancos.map(b => (
                     <option key={b.id} value={b.id}>{b.nombre}</option>
                   ))}
@@ -1154,9 +1273,10 @@ export default function CLCForm({ catalogs, onSave, onCancel, documentToEdit }: 
           <button
             type="button"
             onClick={() => handleSubmit(true)}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white hover:shadow-md hover:shadow-indigo-650/15 text-xs font-black px-5 py-2.5 rounded-xl transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer"
+            disabled={isSubmitting}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white hover:shadow-md hover:shadow-indigo-650/15 text-xs font-black px-5 py-2.5 rounded-xl transition-all text-center flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <Check className="h-4 w-4" /> Finalizar y Generar Folio Definitivo
+            <Check className="h-4 w-4" /> {isSubmitting ? "Guardando..." : "Finalizar y Generar Folio Definitivo"}
           </button>
         </div>
 

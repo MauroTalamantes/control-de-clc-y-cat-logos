@@ -16,16 +16,28 @@ import {
   Signature 
 } from "../types";
 import { Plus, Trash2, Edit2, Check, X, ShieldAlert, BookOpen, Layers } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, RefreshCw, Save } from "lucide-react";
 
 interface CatalogManagerProps {
   catalogs: AppCatalogs;
   onChange: (updated: AppCatalogs) => void;
+  storageMode: "supabase" | "electron" | "browser";
+  saveStatus: "idle" | "loading" | "saving" | "saved" | "error";
+  saveError: string | null;
+  onReload: () => void;
 }
 
 type ActiveTab = "unidades" | "bancos" | "proveedores" | "presupuesto" | "firmas";
 type NewRecordId = "new_unidad" | "new_banco_nombre" | "new_banco" | "new_proveedor" | "new_firma" | "new_f" | "new_pr" | "new_o";
 
-export default function CatalogManager({ catalogs, onChange }: CatalogManagerProps) {
+export default function CatalogManager({
+  catalogs,
+  onChange,
+  storageMode,
+  saveStatus,
+  saveError,
+  onReload
+}: CatalogManagerProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("unidades");
   
   // Local state for editing or adding items
@@ -47,6 +59,24 @@ export default function CatalogManager({ catalogs, onChange }: CatalogManagerPro
   const bancoNombres = catalogs.bancoNombres?.length
     ? catalogs.bancoNombres
     : Array.from(new Set(catalogs.bancos.map(b => b.nombre))).map((nombre, index) => ({ id: `bn_${index + 1}`, nombre }));
+  const storageLabel = storageMode === "supabase"
+    ? "Base central"
+    : storageMode === "electron"
+      ? "Archivo local"
+      : "Navegador";
+  const storageDescription = storageMode === "supabase"
+    ? "Supabase/Postgres"
+    : storageMode === "electron"
+      ? "clc-data.json"
+      : "localStorage";
+  const statusConfig = {
+    idle: { label: "Listo", className: "bg-slate-100 text-slate-600 border-slate-200", icon: Database },
+    loading: { label: "Cargando", className: "bg-blue-50 text-blue-700 border-blue-100", icon: RefreshCw },
+    saving: { label: "Guardando", className: "bg-amber-50 text-amber-700 border-amber-100", icon: Save },
+    saved: { label: "Guardado", className: "bg-emerald-50 text-emerald-700 border-emerald-100", icon: CheckCircle2 },
+    error: { label: "Error", className: "bg-rose-50 text-rose-700 border-rose-100", icon: AlertTriangle }
+  }[saveStatus];
+  const StatusIcon = statusConfig.icon;
 
   const startAddUnit = () => {
     setEditingId("new_unidad");
@@ -327,13 +357,46 @@ export default function CatalogManager({ catalogs, onChange }: CatalogManagerPro
   return (
     <div id="catalog-manager" className="bg-white rounded-xl shadow-xs border border-gray-100 overflow-hidden">
       <div className="bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-100 p-5">
-        <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-          <Layers className="h-5 w-5 text-gray-500" />
-          Administración de Catálogos de Registro
-        </h2>
-        <p className="text-xs text-gray-500 mt-1">
-          Define y administra los datos de autocompletado rápido para generar folios óptimos y ágiles.
-        </p>
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+              <Layers className="h-5 w-5 text-gray-500" />
+              Administración de Catálogos de Registro
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Define y administra los datos de autocompletado rápido para generar folios óptimos y ágiles.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <Database className="h-4 w-4 text-slate-500" />
+              <div className="leading-tight">
+                <p className="text-[11px] font-bold text-slate-700">{storageLabel}</p>
+                <p className="text-[10px] text-slate-400">{storageDescription}</p>
+              </div>
+            </div>
+            <div className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 ${statusConfig.className}`}>
+              <StatusIcon className={`h-3.5 w-3.5 ${saveStatus === "loading" || saveStatus === "saving" ? "animate-spin" : ""}`} />
+              <span className="text-[11px] font-bold">{statusConfig.label}</span>
+            </div>
+            <button
+              type="button"
+              onClick={onReload}
+              disabled={saveStatus === "loading" || saveStatus === "saving"}
+              className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              title="Recargar catálogos"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Recargar
+            </button>
+          </div>
+        </div>
+        {saveError && (
+          <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-700">
+            {saveError}
+          </div>
+        )}
       </div>
 
       {/* Tabs navigation */}

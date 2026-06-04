@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { AppCatalogs, CLCDocument } from "../types";
-import { INITIAL_CATALOGS } from "./initialData";
+import { INITIAL_CATALOGS, normalizeCatalogs } from "./initialData";
 
 interface SupabaseSnapshotPayload {
   catalogs: AppCatalogs | null;
@@ -41,7 +41,7 @@ function normalizeSnapshot(payload: SupabaseSnapshotPayload): {
   storageMode: "supabase";
 } {
   return {
-    catalogs: payload.catalogs || INITIAL_CATALOGS,
+    catalogs: normalizeCatalogs(payload.catalogs),
     documents: Array.isArray(payload.documents) ? payload.documents : [],
     storageMode: "supabase"
   };
@@ -62,12 +62,17 @@ export async function loadSupabaseAppData() {
   const payload = await callRpc<SupabaseSnapshotPayload>("clc_get_snapshot", {
     p_app_key: supabaseAppKey
   });
+
+  if (!payload.catalogs) {
+    return saveSupabaseCatalogs(normalizeCatalogs(INITIAL_CATALOGS));
+  }
+
   return normalizeSnapshot(payload);
 }
 
 export async function saveSupabaseCatalogs(catalogs: AppCatalogs) {
   const payload = await callRpc<SupabaseSnapshotPayload>("clc_save_catalogs", {
-    p_catalogs: catalogs,
+    p_catalogs: normalizeCatalogs(catalogs),
     p_app_key: supabaseAppKey
   });
   return normalizeSnapshot(payload);

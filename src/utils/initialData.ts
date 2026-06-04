@@ -217,22 +217,27 @@ export const INITIAL_DOCUMENTS: CLCDocument[] = [
   }
 ];
 
+export function normalizeCatalogs(catalogs: Partial<AppCatalogs> | null | undefined): AppCatalogs {
+  const parsed = catalogs || {};
+  return {
+    ...INITIAL_CATALOGS,
+    ...parsed,
+    defaultUnidadId: parsed.defaultUnidadId || parsed.unidades?.[0]?.id || INITIAL_CATALOGS.defaultUnidadId,
+    bancoNombres: parsed.bancoNombres?.length
+      ? parsed.bancoNombres
+      : Array.from(new Set((parsed.bancos || INITIAL_CATALOGS.bancos).map(b => b.nombre))).map((nombre, index) => ({
+          id: `bn_${index + 1}`,
+          nombre
+        }))
+  };
+}
+
 export function getStoredCatalogs(): AppCatalogs {
   const data = localStorage.getItem("clc_catalogs");
   if (data) {
     try {
       const parsed = JSON.parse(data) as AppCatalogs;
-      return {
-        ...INITIAL_CATALOGS,
-        ...parsed,
-        defaultUnidadId: parsed.defaultUnidadId || parsed.unidades?.[0]?.id || INITIAL_CATALOGS.defaultUnidadId,
-        bancoNombres: parsed.bancoNombres?.length
-          ? parsed.bancoNombres
-          : Array.from(new Set((parsed.bancos || INITIAL_CATALOGS.bancos).map(b => b.nombre))).map((nombre, index) => ({
-              id: `bn_${index + 1}`,
-              nombre
-            }))
-      };
+      return normalizeCatalogs(parsed);
     } catch (e) {
       console.error("Error parsing catalogs from localStorage, resetting", e);
     }
