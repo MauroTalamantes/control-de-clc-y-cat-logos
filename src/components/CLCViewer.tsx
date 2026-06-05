@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { CLCDocument } from "../types";
 import { downloadDocExcel } from "../utils/excelGenerator";
 import { createDocPDFPreviewUrl, downloadDocPDF, printDocPDF } from "../utils/pdfGenerator";
@@ -1072,13 +1073,14 @@ const handleDownloadSelectedPDF = async () => {
         </div>
       )}
 
-      {activeTooltip && (
+      {activeTooltip && createPortal(
         <div
           className="pointer-events-none fixed z-[100] -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[10px] font-semibold text-white shadow-md"
           style={{ left: activeTooltip.left, top: activeTooltip.top }}
         >
           {activeTooltip.text}
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>
