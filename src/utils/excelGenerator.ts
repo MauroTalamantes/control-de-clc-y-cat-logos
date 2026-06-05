@@ -409,7 +409,7 @@ function moveSignaturesToBottom(totalConceptos: number) {
 function getRowHeightByConceptCount(totalConceptos: number) {
   if (totalConceptos <= SINGLE_CONCEPT_LIMIT) return 59.25;
   if (totalConceptos <= 3) return 38;
-  if (totalConceptos <= 5) return 28;
+  if (totalConceptos <= 5) return 24;
   if (totalConceptos <= 10) return 16;
   if (totalConceptos <= 16) return 12.75;
   if (totalConceptos <= EXTENDED_ONE_PAGE_LIMIT) return 10.5;
@@ -439,7 +439,7 @@ function getFooterHeightsByConceptCount(totalConceptos: number): FooterRowHeight
     };
   }
 
-  if (totalConceptos <= 5) {
+  if (totalConceptos <= 3) {
     return {
       concept: 42,
       spacerAfterConcept: 12,
@@ -450,6 +450,21 @@ function getFooterHeightsByConceptCount(totalConceptos: number): FooterRowHeight
       signatureSpacer: 16,
       footerSpacer: 10,
       footer: 50,
+      date: DEFAULT_ROW_HEIGHT
+    };
+  }
+
+  if (totalConceptos <= 5) {
+    return {
+      concept: 42,
+      spacerAfterConcept: 12,
+      signatureSeparator: 10,
+      signatureLabel: 12.75,
+      signatureName: 58,
+      signatureTitle: 22,
+      signatureSpacer: 12,
+      footerSpacer: 6,
+      footer: 44,
       date: DEFAULT_ROW_HEIGHT
     };
   }
