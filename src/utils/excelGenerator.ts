@@ -13,16 +13,47 @@ const OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/rel
 const TEMPLATE_SHEET_NAME = "FORMATO";
 const FIRST_ITEM_ROW = 10;
 const BASE_CONCEPT_ROW = 11;
+const BASE_SIGNATURE_LABEL_ROW = 14;
 const BASE_SIGNATURE_NAME_ROW = 15;
 const BASE_SIGNATURE_TITLE_ROW = 16;
+const BASE_SIGNATURE_SPACER_ROW = 17;
+const BASE_FOOTER_SPACER_ROW = 18;
 const BASE_FOOTER_ROW = 19;
 const BASE_DATE_ROW = 21;
+const DEFAULT_ROW_HEIGHT = 15;
+const SINGLE_CONCEPT_LIMIT = 1;
+const EXTENDED_ONE_PAGE_LIMIT = 22;
+const MULTIPAGE_CONCEPTS_PER_PAGE = 32;
+const PRINTABLE_HEIGHT_AT_WIDTH_FIT = 680;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
 
 let templateBufferPromise: Promise<ArrayBuffer> | null = null;
 
 type XmlZip = Record<string, Uint8Array>;
+type PaginationMode = "normal" | "extended" | "multipage";
+
+interface FooterRowHeights {
+  concept: number;
+  spacerAfterConcept: number;
+  signatureSeparator: number;
+  signatureLabel: number;
+  signatureName: number;
+  signatureTitle: number;
+  signatureSpacer: number;
+  footerSpacer: number;
+  footer: number;
+  date: number;
+}
+
+interface PaginationPlan {
+  mode: PaginationMode;
+  totalConceptos: number;
+  visibleDetailRows: number;
+  detailRowHeight: number;
+  conceptsPerPage: number;
+  footerHeights: FooterRowHeights;
+}
 
 function parseXml(xml: string, label: string) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -229,6 +260,10 @@ function clearCell(cell: Element) {
   cell.removeAttribute("t");
 }
 
+function clearCellValue(sheetDoc: XMLDocument, address: string) {
+  clearCell(getCell(sheetDoc, address));
+}
+
 function setTextCell(sheetDoc: XMLDocument, address: string, value: string | number | null | undefined) {
   const cell = getCell(sheetDoc, address);
   const text = value == null ? "" : String(value);
@@ -313,7 +348,8 @@ function adjustDimension(sheetDoc: XMLDocument, rowOffset: number) {
   dimension.setAttribute("ref", `${startRef}:${withRow(endRef, rowFromCellRef(endRef) + rowOffset)}`);
 }
 
-function ensureSheetPrintFit(sheetDoc: XMLDocument) {
+// Keeps horizontal fit but lets Excel paginate vertically instead of squeezing all rows.
+function applyPrintSettings(sheetDoc: XMLDocument) {
   let sheetPr = sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "sheetPr")[0];
   if (!sheetPr) {
     sheetPr = sheetDoc.createElementNS(XLSX_MAIN_NS, "sheetPr");
@@ -335,7 +371,7 @@ function ensureSheetPrintFit(sheetDoc: XMLDocument) {
   }
   pageSetup.removeAttribute("scale");
   pageSetup.setAttribute("fitToWidth", "1");
-  pageSetup.setAttribute("fitToHeight", "1");
+  pageSetup.setAttribute("fitToHeight", "0");
   pageSetup.setAttribute("orientation", pageSetup.getAttribute("orientation") || "landscape");
 }
 
@@ -362,6 +398,219 @@ function adjustWorkbookPrintArea(zip: XmlZip, sheetName: string, rowOffset: numb
   const lastPrintRow = BASE_DATE_ROW + rowOffset;
   printArea.textContent = `${sheetName}!$A$1:$W$${lastPrintRow}`;
   zip["xl/workbook.xml"] = strToU8(serializeXml(workbook));
+}
+
+// Uses only the real detail rows; a single concept keeps the original template spacing.
+function moveSignaturesToBottom(totalConceptos: number) {
+  return Math.max(totalConceptos, 1);
+}
+
+// Progressively compacts detail rows as the number of concepts grows.
+function getRowHeightByConceptCount(totalConceptos: number) {
+  if (totalConceptos <= SINGLE_CONCEPT_LIMIT) return 59.25;
+  if (totalConceptos <= 10) return 16;
+  if (totalConceptos <= 16) return 12.75;
+  if (totalConceptos <= EXTENDED_ONE_PAGE_LIMIT) return 10.5;
+  return 11.25;
+}
+
+// Defines the manual pagination cadence for extended documents.
+function getConceptsPerPage(totalConceptos: number) {
+  if (totalConceptos <= EXTENDED_ONE_PAGE_LIMIT) return totalConceptos;
+  return MULTIPAGE_CONCEPTS_PER_PAGE;
+}
+
+// Compacts only footer/signature spacing, keeping the template styles and fonts intact.
+function getFooterHeightsByConceptCount(totalConceptos: number): FooterRowHeights {
+  if (totalConceptos <= SINGLE_CONCEPT_LIMIT) {
+    return {
+      concept: 48.75,
+      spacerAfterConcept: 14.25,
+      signatureSeparator: 12,
+      signatureLabel: 12.75,
+      signatureName: 76.5,
+      signatureTitle: 25.5,
+      signatureSpacer: 25.5,
+      footerSpacer: 12.75,
+      footer: 57,
+      date: DEFAULT_ROW_HEIGHT
+    };
+  }
+
+  if (totalConceptos <= 10) {
+    return {
+      concept: 42,
+      spacerAfterConcept: 10,
+      signatureSeparator: 8,
+      signatureLabel: 12,
+      signatureName: 62,
+      signatureTitle: 23,
+      signatureSpacer: 16,
+      footerSpacer: 8,
+      footer: 52,
+      date: DEFAULT_ROW_HEIGHT
+    };
+  }
+
+  if (totalConceptos <= 16) {
+    return {
+      concept: 38,
+      spacerAfterConcept: 8,
+      signatureSeparator: 6,
+      signatureLabel: 11,
+      signatureName: 50,
+      signatureTitle: 21,
+      signatureSpacer: 10,
+      footerSpacer: 6,
+      footer: 46,
+      date: 12
+    };
+  }
+
+  if (totalConceptos <= EXTENDED_ONE_PAGE_LIMIT) {
+    return {
+      concept: 30,
+      spacerAfterConcept: 4,
+      signatureSeparator: 4,
+      signatureLabel: 10,
+      signatureName: 34,
+      signatureTitle: 18,
+      signatureSpacer: 4,
+      footerSpacer: 4,
+      footer: 35,
+      date: 12
+    };
+  }
+
+  return {
+    concept: 48.75,
+    spacerAfterConcept: 14.25,
+    signatureSeparator: 12,
+    signatureLabel: 12.75,
+    signatureName: 76.5,
+    signatureTitle: 25.5,
+    signatureSpacer: 25.5,
+    footerSpacer: 12.75,
+    footer: 57,
+    date: DEFAULT_ROW_HEIGHT
+  };
+}
+
+// Centralizes the CLC pagination mode, visible rows and row heights for one generation.
+function buildPaginationPlan(totalConceptos: number): PaginationPlan {
+  const mode: PaginationMode =
+    totalConceptos <= SINGLE_CONCEPT_LIMIT
+      ? "normal"
+      : totalConceptos <= EXTENDED_ONE_PAGE_LIMIT
+        ? "extended"
+        : "multipage";
+
+  return {
+    mode,
+    totalConceptos,
+    visibleDetailRows: moveSignaturesToBottom(totalConceptos),
+    detailRowHeight: getRowHeightByConceptCount(totalConceptos),
+    conceptsPerPage: getConceptsPerPage(totalConceptos),
+    footerHeights: getFooterHeightsByConceptCount(totalConceptos)
+  };
+}
+
+function setRowHeight(sheetDoc: XMLDocument, rowNumber: number, height: number) {
+  const row = getRow(sheetDoc, rowNumber);
+  if (!row) return;
+  row.setAttribute("ht", String(height));
+  row.setAttribute("customHeight", "1");
+}
+
+function getRowHeight(sheetDoc: XMLDocument, rowNumber: number) {
+  const row = getRow(sheetDoc, rowNumber);
+  const height = Number(row?.getAttribute("ht") || DEFAULT_ROW_HEIGHT);
+  return Number.isFinite(height) && height > 0 ? height : DEFAULT_ROW_HEIGHT;
+}
+
+function sumRowHeights(sheetDoc: XMLDocument, startRow: number, endRow: number) {
+  let total = 0;
+  for (let row = startRow; row <= endRow; row += 1) total += getRowHeight(sheetDoc, row);
+  return total;
+}
+
+// Applies deterministic heights so Excel does not auto-fit rows differently when printing.
+function applyPaginationRowHeights(sheetDoc: XMLDocument, pagination: PaginationPlan, rowOffset: number) {
+  const lastItemRow = FIRST_ITEM_ROW + pagination.visibleDetailRows - 1;
+  for (let row = FIRST_ITEM_ROW; row <= lastItemRow; row += 1) {
+    setRowHeight(sheetDoc, row, pagination.detailRowHeight);
+  }
+
+  setRowHeight(sheetDoc, BASE_CONCEPT_ROW + rowOffset, pagination.footerHeights.concept);
+  setRowHeight(sheetDoc, BASE_CONCEPT_ROW + rowOffset + 1, pagination.footerHeights.spacerAfterConcept);
+  setRowHeight(sheetDoc, BASE_CONCEPT_ROW + rowOffset + 2, pagination.footerHeights.signatureSeparator);
+  setRowHeight(sheetDoc, BASE_SIGNATURE_LABEL_ROW + rowOffset, pagination.footerHeights.signatureLabel);
+  setRowHeight(sheetDoc, BASE_SIGNATURE_NAME_ROW + rowOffset, pagination.footerHeights.signatureName);
+  setRowHeight(sheetDoc, BASE_SIGNATURE_TITLE_ROW + rowOffset, pagination.footerHeights.signatureTitle);
+  setRowHeight(sheetDoc, BASE_SIGNATURE_SPACER_ROW + rowOffset, pagination.footerHeights.signatureSpacer);
+  setRowHeight(sheetDoc, BASE_FOOTER_SPACER_ROW + rowOffset, pagination.footerHeights.footerSpacer);
+  setRowHeight(sheetDoc, BASE_FOOTER_ROW + rowOffset, pagination.footerHeights.footer);
+  setRowHeight(sheetDoc, BASE_DATE_ROW + rowOffset, pagination.footerHeights.date);
+}
+
+function getDetailPageBreakRows(pagination: PaginationPlan) {
+  if (pagination.mode !== "multipage") return [];
+
+  const breakRows: number[] = [];
+  for (
+    let nextConceptIndex = pagination.conceptsPerPage;
+    nextConceptIndex < pagination.totalConceptos;
+    nextConceptIndex += pagination.conceptsPerPage
+  ) {
+    breakRows.push(FIRST_ITEM_ROW + nextConceptIndex);
+  }
+  return breakRows;
+}
+
+// Adds a final-page break before "Solicita:" when signatures, legal text and date
+// no longer fit together on the current printed page.
+function createSignaturePageIfNeeded(sheetDoc: XMLDocument, pagination: PaginationPlan, rowOffset: number) {
+  const breakRows = getDetailPageBreakRows(pagination);
+  const protectedBlockStartRow = BASE_SIGNATURE_LABEL_ROW + rowOffset;
+  const dateRow = BASE_DATE_ROW + rowOffset;
+  const currentPageStartRow = breakRows.length ? breakRows[breakRows.length - 1] : 1;
+  const heightBeforeProtectedBlock = sumRowHeights(sheetDoc, currentPageStartRow, protectedBlockStartRow - 1);
+  const protectedBlockHeight = sumRowHeights(sheetDoc, protectedBlockStartRow, dateRow);
+
+  if (heightBeforeProtectedBlock + protectedBlockHeight > PRINTABLE_HEIGHT_AT_WIDTH_FIT) {
+    breakRows.push(protectedBlockStartRow);
+  }
+
+  return breakRows;
+}
+
+// Writes explicit Excel row breaks. breakRows are the first rows of the next page.
+function insertManualPageBreaks(sheetDoc: XMLDocument, breakRows: number[]) {
+  Array.from(sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "rowBreaks")).forEach(rowBreaks =>
+    rowBreaks.parentNode?.removeChild(rowBreaks)
+  );
+
+  const uniqueBreakRows = Array.from(new Set(breakRows.filter(row => row > 1))).sort((a, b) => a - b);
+  if (!uniqueBreakRows.length) return;
+
+  const rowBreaks = sheetDoc.createElementNS(XLSX_MAIN_NS, "rowBreaks");
+  rowBreaks.setAttribute("count", String(uniqueBreakRows.length));
+  rowBreaks.setAttribute("manualBreakCount", String(uniqueBreakRows.length));
+
+  uniqueBreakRows.forEach(row => {
+    const breakNode = sheetDoc.createElementNS(XLSX_MAIN_NS, "brk");
+    breakNode.setAttribute("id", String(row - 1));
+    breakNode.setAttribute("max", "16383");
+    breakNode.setAttribute("man", "1");
+    rowBreaks.appendChild(breakNode);
+  });
+
+  const insertBefore =
+    findFirstElement(sheetDoc.documentElement, "colBreaks") ||
+    findFirstElement(sheetDoc.documentElement, "customProperties") ||
+    findFirstElement(sheetDoc.documentElement, "drawing") ||
+    findFirstElement(sheetDoc.documentElement, "legacyDrawingHF");
+  sheetDoc.documentElement.insertBefore(rowBreaks, insertBefore || null);
 }
 
 function adjustMergeCells(sheetDoc: XMLDocument, rowOffset: number) {
@@ -454,6 +703,17 @@ function fillItemRows(sheetDoc: XMLDocument, doc: CLCDocument, itemCount: number
     setTextCell(sheetDoc, `G${row}`, item?.objetoClave || "");
     setTextCell(sheetDoc, `I${row}`, item?.objetoNombre || "");
     setTextCell(sheetDoc, `N${row}`, item?.numFactura || "");
+
+    if (!item) {
+      clearCellValue(sheetDoc, `Q${row}`);
+      clearCellValue(sheetDoc, `R${row}`);
+      clearCellValue(sheetDoc, `S${row}`);
+      clearCellValue(sheetDoc, `U${row}`);
+      clearCellValue(sheetDoc, `V${row}`);
+      clearCellValue(sheetDoc, `W${row}`);
+      continue;
+    }
+
     setDateCell(sheetDoc, `Q${row}`, item?.fechaFactura || null);
     setNumberCell(sheetDoc, `R${row}`, roundMoney(item?.subTotal || 0));
     setNumberCell(sheetDoc, `S${row}`, roundMoney(item?.descuento || 0));
@@ -513,13 +773,16 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   const sheetPath = getSheetPath(zip, TEMPLATE_SHEET_NAME);
   const sheetDoc = parseXml(strFromU8(zip[sheetPath]), sheetPath);
   const sharedStrings = readSharedStrings(zip);
-  const itemCount = Math.max(doc.items.length, 1);
+  const pagination = buildPaginationPlan(doc.items.length);
+  const itemCount = pagination.visibleDetailRows;
   const rowOffset = cloneItemRows(sheetDoc, itemCount);
 
   adjustDimension(sheetDoc, rowOffset);
-  ensureSheetPrintFit(sheetDoc);
+  applyPrintSettings(sheetDoc);
   adjustWorkbookPrintArea(zip, TEMPLATE_SHEET_NAME, rowOffset);
   adjustMergeCells(sheetDoc, rowOffset);
+  applyPaginationRowHeights(sheetDoc, pagination, rowOffset);
+  insertManualPageBreaks(sheetDoc, createSignaturePageIfNeeded(sheetDoc, pagination, rowOffset));
   fillGeneralData(sheetDoc, doc);
   fillItemRows(sheetDoc, doc, itemCount);
   fillFooterData(sheetDoc, sharedStrings, doc, rowOffset, itemCount);
