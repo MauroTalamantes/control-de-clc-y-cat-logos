@@ -58,6 +58,21 @@ export interface FolioCounter {
   lastNumber: number;
 }
 
+export interface AppDocumentMetrics {
+  totalDocuments: number;
+  finalizedCount: number;
+  draftCount: number;
+  totalInvoiced: number;
+}
+
+export interface FolioYearSummary {
+  anio: number;
+  highestFinalizedFolioNumber: number;
+  finalizedCount: number;
+  draftCount: number;
+  totalInvoiced: number;
+}
+
 export interface CLCItem {
   id: string;
   oc: string; // Orden de Compra

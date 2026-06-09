@@ -4,12 +4,12 @@
  */
 
 import { useState, useEffect } from "react";
-import { AppCatalogs, CLCDocument, FolioCounter } from "./types";
+import { AppCatalogs, AppDocumentMetrics, CLCDocument, FolioCounter, FolioYearSummary } from "./types";
 import { INITIAL_CATALOGS, INITIAL_DOCUMENTS } from "./utils/initialData";
 import {
   deletePersistedDocument,
   finalizeAndPersistDocument,
-  loadAppData,
+  loadAppMetaData,
   persistDocument,
   persistCatalogs,
   setNextFolioNumber
@@ -35,8 +35,29 @@ type ViewMode = "lista" | "catalogos" | "crear";
 type StorageMode = "supabase" | "electron" | "browser";
 type CatalogSyncStatus = "idle" | "loading" | "saving" | "saved" | "error";
 
+const EMPTY_DOCUMENT_METRICS: AppDocumentMetrics = {
+  totalDocuments: 0,
+  finalizedCount: 0,
+  draftCount: 0,
+  totalInvoiced: 0
+};
+
 function getDocumentsFromPersistResult(result: { documents: CLCDocument[] } | CLCDocument[]): CLCDocument[] {
   return Array.isArray(result) ? result : result.documents;
+}
+
+type AppMetaResult = {
+  catalogs: AppCatalogs;
+  documents: CLCDocument[];
+  folioCounters: FolioCounter[];
+  documentMetrics: AppDocumentMetrics;
+  folioYearSummaries: FolioYearSummary[];
+  storageMode: StorageMode;
+  dataFilePath?: string;
+};
+
+function isSupabaseMetaResult(value: unknown): value is AppMetaResult & { storageMode: "supabase" } {
+  return Boolean(value && !Array.isArray(value) && (value as { storageMode?: unknown }).storageMode === "supabase");
 }
 
 function parseCLCFolio(folio: string): { number: number; year: number; normalized: string } | null {
@@ -72,11 +93,26 @@ export default function App() {
   const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
   const [documents, setDocuments] = useState<CLCDocument[]>([]);
   const [folioCounters, setFolioCounters] = useState<FolioCounter[]>([]);
+  const [documentMetrics, setDocumentMetrics] = useState<AppDocumentMetrics>(EMPTY_DOCUMENT_METRICS);
+  const [folioYearSummaries, setFolioYearSummaries] = useState<FolioYearSummary[]>([]);
+  const [documentListRefreshKey, setDocumentListRefreshKey] = useState(0);
   const [isInitialDataLoading, setIsInitialDataLoading] = useState(true);
   const [editingDoc, setEditingDoc] = useState<CLCDocument | null>(null);
   const [storageMode, setStorageMode] = useState<StorageMode>("browser");
   const [catalogSyncStatus, setCatalogSyncStatus] = useState<CatalogSyncStatus>("loading");
   const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
+  const refreshDocumentList = () => setDocumentListRefreshKey(key => key + 1);
+  const applyAppMeta = (snapshot: AppMetaResult, options: { updateDocuments?: boolean } = {}) => {
+    const updateDocuments = options.updateDocuments ?? snapshot.storageMode !== "supabase";
+    setCatalogs(snapshot.catalogs);
+    if (updateDocuments) {
+      setDocuments(snapshot.documents);
+    }
+    setFolioCounters(snapshot.folioCounters);
+    setDocumentMetrics(snapshot.documentMetrics);
+    setFolioYearSummaries(snapshot.folioYearSummaries);
+    setStorageMode(snapshot.storageMode);
+  };
 
   // Concurrency Simulation Logs list
   const [simulationLog, setSimulationLog] = useState<{ time: string; text: string; type: "info" | "success" | "warning" }[]>([
@@ -95,13 +131,10 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    loadAppData()
+    loadAppMetaData()
       .then(snapshot => {
         if (!isMounted) return;
-        setCatalogs(snapshot.catalogs);
-        setDocuments(snapshot.documents);
-        setFolioCounters(snapshot.folioCounters);
-        setStorageMode(snapshot.storageMode);
+        applyAppMeta(snapshot);
         setCatalogSyncStatus("idle");
         setCatalogSyncError(null);
         setIsInitialDataLoading(false);
@@ -153,29 +186,31 @@ export default function App() {
     let isMounted = true;
     let isRefreshing = false;
 
-    const refreshSnapshot = async () => {
+    const refreshAppMeta = async () => {
       if (isRefreshing) return;
       isRefreshing = true;
       try {
-        const snapshot = await loadAppData();
+        const snapshot = await loadAppMetaData();
         if (!isMounted) return;
-        setDocuments(snapshot.documents);
-        setFolioCounters(snapshot.folioCounters);
+        applyAppMeta(snapshot, { updateDocuments: false });
+        if (viewMode === "lista") {
+          refreshDocumentList();
+        }
       } catch (error) {
-        console.error("Error refreshing Supabase app data", error);
+        console.error("Error refreshing Supabase app metadata", error);
       } finally {
         isRefreshing = false;
       }
     };
 
-    const intervalId = window.setInterval(refreshSnapshot, 3000);
-    window.addEventListener("focus", refreshSnapshot);
+    const intervalId = window.setInterval(refreshAppMeta, 3000);
+    window.addEventListener("focus", refreshAppMeta);
     return () => {
       isMounted = false;
       window.clearInterval(intervalId);
-      window.removeEventListener("focus", refreshSnapshot);
+      window.removeEventListener("focus", refreshAppMeta);
     };
-  }, [storageMode, isInitialDataLoading]);
+  }, [storageMode, isInitialDataLoading, viewMode]);
 
   const persistCatalogChanges = async (
     updated: AppCatalogs,
@@ -189,10 +224,7 @@ export default function App() {
     try {
       const result = await persistCatalogs(updated);
       if (result) {
-        setCatalogs(result.catalogs);
-        setDocuments(result.documents);
-        setFolioCounters(result.folioCounters);
-        setStorageMode(result.storageMode);
+        applyAppMeta(result);
         setCatalogSyncStatus("saved");
         return result.catalogs;
       }
@@ -221,11 +253,9 @@ export default function App() {
     setCatalogSyncStatus("loading");
     setCatalogSyncError(null);
     try {
-      const snapshot = await loadAppData();
-      setCatalogs(snapshot.catalogs);
-      setDocuments(snapshot.documents);
-      setFolioCounters(snapshot.folioCounters);
-      setStorageMode(snapshot.storageMode);
+      const snapshot = await loadAppMetaData();
+      applyAppMeta(snapshot);
+      refreshDocumentList();
       setCatalogSyncStatus("idle");
       setSimulationLog(prev => [
         {
@@ -246,7 +276,7 @@ export default function App() {
   // Safe document save operation
   const handleSaveDocument = async (doc: CLCDocument, finalize: boolean) => {
     let updatedDocs = [...documents];
-    const existingDoc = updatedDocs.find(d => d.id === doc.id);
+    const existingDoc = updatedDocs.find(d => d.id === doc.id) || (editingDoc?.id === doc.id ? editingDoc : undefined);
     const isEdit = Boolean(existingDoc);
 
     if (finalize && existingDoc?.estado === "finalizado") {
@@ -279,23 +309,25 @@ export default function App() {
 
       updatedDocs = updatedDocs.map(d => d.id === doc.id ? updatedFinalizedDoc : d);
       const persisted = await persistDocument(updatedFinalizedDoc, updatedDocs);
-      const persistedDocuments = getDocumentsFromPersistResult(persisted);
-      if (!Array.isArray(persisted)) {
-        setCatalogs(persisted.catalogs);
-        setFolioCounters(persisted.folioCounters);
-      }
-
-      const activeFolioCounters = Array.isArray(persisted) ? folioCounters : persisted.folioCounters;
-      const highestFolioAfterSave = getHighestFinalizedFolioNumber(persistedDocuments, parsedFolio.year);
-      const configuredLastFolio = getConfiguredLastFolioNumber(activeFolioCounters, parsedFolio.year);
-      if (highestFolioAfterSave > configuredLastFolio) {
-        const snapshot = await setNextFolioNumber(parsedFolio.year, highestFolioAfterSave + 1);
-        setCatalogs(snapshot.catalogs);
-        setDocuments(snapshot.documents);
-        setFolioCounters(snapshot.folioCounters);
-        setStorageMode(snapshot.storageMode);
+      if (isSupabaseMetaResult(persisted)) {
+        applyAppMeta(persisted, { updateDocuments: false });
+        const highestFolioAfterSave = persisted.folioYearSummaries.find(summary => summary.anio === parsedFolio.year)
+          ?.highestFinalizedFolioNumber || parsedFolio.number;
+        const configuredLastFolio = getConfiguredLastFolioNumber(persisted.folioCounters, parsedFolio.year);
+        if (highestFolioAfterSave > configuredLastFolio) {
+          const snapshot = await setNextFolioNumber(parsedFolio.year, highestFolioAfterSave + 1);
+          applyAppMeta(snapshot, { updateDocuments: false });
+        }
       } else {
-        setDocuments(persistedDocuments);
+        const persistedDocuments = getDocumentsFromPersistResult(persisted);
+        const highestFolioAfterSave = getHighestFinalizedFolioNumber(persistedDocuments, parsedFolio.year);
+        const configuredLastFolio = getConfiguredLastFolioNumber(folioCounters, parsedFolio.year);
+        if (highestFolioAfterSave > configuredLastFolio) {
+          const snapshot = await setNextFolioNumber(parsedFolio.year, highestFolioAfterSave + 1);
+          applyAppMeta(snapshot);
+        } else {
+          setDocuments(persistedDocuments);
+        }
       }
 
       const logTime = new Date().toLocaleTimeString();
@@ -311,14 +343,15 @@ export default function App() {
       await downloadDocExcel(updatedFinalizedDoc, { openAfterSave: false });
       alert(`Expediente ${updatedFinalizedDoc.folio} actualizado correctamente.`);
     } else if (finalize) {
-      const {
-        finalizedDoc,
-        documents: persistedDocs,
-        folioCounters: persistedFolioCounters
-      } = await finalizeAndPersistDocument(doc, documents);
-      
-      setDocuments(persistedDocs);
-      setFolioCounters(persistedFolioCounters);
+      const persisted = await finalizeAndPersistDocument(doc, documents);
+      const { finalizedDoc } = persisted;
+
+      if (isSupabaseMetaResult(persisted)) {
+        applyAppMeta(persisted, { updateDocuments: false });
+      } else {
+        setDocuments(persisted.documents);
+        setFolioCounters(persisted.folioCounters);
+      }
       
       // Update logs
       const logTime = new Date().toLocaleTimeString();
@@ -348,7 +381,11 @@ export default function App() {
       }
 
       const persisted = await persistDocument(draftDoc, updatedDocs);
-      setDocuments(getDocumentsFromPersistResult(persisted));
+      if (isSupabaseMetaResult(persisted)) {
+        applyAppMeta(persisted, { updateDocuments: false });
+      } else {
+        setDocuments(getDocumentsFromPersistResult(persisted));
+      }
 
       const logTime = new Date().toLocaleTimeString();
       setSimulationLog(prev => [
@@ -363,16 +400,15 @@ export default function App() {
       alert("Borrador guardado correctamente. Podrá editarlo y finalizarlo en cualquier momento.");
     }
 
+    refreshDocumentList();
     setEditingDoc(null);
     setViewMode("lista");
   };
 
   const handleSetNextFolioNumber = async (anio: number, nextNumber: number) => {
     const snapshot = await setNextFolioNumber(anio, nextNumber);
-    setCatalogs(snapshot.catalogs);
-    setDocuments(snapshot.documents);
-    setFolioCounters(snapshot.folioCounters);
-    setStorageMode(snapshot.storageMode);
+    applyAppMeta(snapshot);
+    refreshDocumentList();
   };
 
   // Concurrency Simulation Callback
@@ -438,7 +474,12 @@ export default function App() {
     const updated = [...documents, simDoc];
     setDocuments(updated);
     persistDocument(simDoc, updated).then(result => {
-      setDocuments(getDocumentsFromPersistResult(result));
+      if (isSupabaseMetaResult(result)) {
+        applyAppMeta(result, { updateDocuments: false });
+        refreshDocumentList();
+      } else {
+        setDocuments(getDocumentsFromPersistResult(result));
+      }
     }).catch(error => {
       console.error("Error saving simulation document", error);
     });
@@ -460,7 +501,12 @@ export default function App() {
       const updated = documents.filter(d => d.id !== id);
       setDocuments(updated);
       deletePersistedDocument(id, updated).then(result => {
-        setDocuments(getDocumentsFromPersistResult(result));
+        if (isSupabaseMetaResult(result)) {
+          applyAppMeta(result, { updateDocuments: false });
+        } else {
+          setDocuments(getDocumentsFromPersistResult(result));
+        }
+        refreshDocumentList();
       }).catch(error => {
         console.error("Error deleting document", error);
         alert("No se pudo actualizar la base de datos despues de eliminar.");
@@ -483,13 +529,6 @@ export default function App() {
     setEditingDoc(doc);
     setViewMode("crear");
   };
-
-  // Analytics calculated fields
-  const finalizedDocs = documents.filter(d => d.estado === "finalizado");
-  const draftCount = documents.filter(d => d.estado === "borrador").length;
-  const totalInvoiced = finalizedDocs.reduce((sum, doc) => {
-    return sum + doc.items.reduce((itemSum, item) => itemSum + item.importe, 0);
-  }, 0);
 
   return (
     <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col font-sans select-text">
@@ -562,6 +601,7 @@ export default function App() {
         {viewMode === "lista" && (
           <CLCViewer
             documents={documents}
+            refreshToken={documentListRefreshKey}
             isLoading={isInitialDataLoading}
             onEdit={handleStartEdit}
             onDelete={handleDeleteDocument}
@@ -578,6 +618,7 @@ export default function App() {
             onReload={handleReloadCatalogs}
             documents={documents}
             folioCounters={folioCounters}
+            folioYearSummaries={folioYearSummaries}
             onSetNextFolioNumber={handleSetNextFolioNumber}
           />
         )}

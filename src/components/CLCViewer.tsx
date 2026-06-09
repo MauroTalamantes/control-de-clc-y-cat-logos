@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { CLCDocument } from "../types";
+import { listDocuments } from "../utils/appStore";
 import { downloadDocExcel } from "../utils/excelGenerator";
 import { createDocPDFPreviewUrl, downloadDocPDF, printDocPDF } from "../utils/pdfGenerator";
 import { 
@@ -21,6 +22,7 @@ import {
 
 interface CLCViewerProps {
   documents: CLCDocument[];
+  refreshToken?: number;
   isLoading: boolean;
   onEdit: (doc: CLCDocument) => void;
   onDelete: (id: string) => void;
@@ -33,6 +35,7 @@ type ExportAction = { docId: string; type: "excel" | "pdf" } | null;
 
 export default function CLCViewer({ 
   documents,
+  refreshToken = 0,
   isLoading,
   onEdit, 
   onDelete
@@ -53,8 +56,15 @@ export default function CLCViewer({
   const [officialPreviewError, setOfficialPreviewError] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [activeExport, setActiveExport] = useState<ExportAction>(null);
+  const [pageDocuments, setPageDocuments] = useState<CLCDocument[]>([]);
+  const [totalDocuments, setTotalDocuments] = useState(0);
+  const [isPageLoading, setIsPageLoading] = useState(false);
+  const [isPageRefreshing, setIsPageRefreshing] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const dateFilterRef = useRef<HTMLDivElement>(null);
   const officialPreviewCacheRef = useRef<Map<string, string>>(new Map());
+  const hasLoadedPageRef = useRef(false);
+  const documentsVersion = `${documents.length}:${refreshToken}`;
 
   const openPreview = (docId: string) => {
     setPreviewMode("datos");
@@ -89,7 +99,7 @@ export default function CLCViewer({
 
   const handleSelectAllDocs = (isChecked: boolean) => {
     if (isChecked) {
-      setSelectedDocumentIds(paginatedDocs.map(doc => doc.id));
+      setSelectedDocumentIds(pageDocuments.map(doc => doc.id));
     } else {
       setSelectedDocumentIds([]);
     }
@@ -144,47 +154,85 @@ export default function CLCViewer({
     if (sortKey !== key) return "-";
     return sortDirection === "asc" ? "^" : "v";
   };
-  // Filter records based on search word and date range
-  const filteredDocs = documents.filter(doc => {
-    const docDate = doc.fechaCreacion?.slice(0, 10);
-    if (dateFrom && docDate < dateFrom) return false;
-    if (dateTo && docDate > dateTo) return false;
 
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase().trim();
-    return (
-      (doc.folio && doc.folio.toLowerCase().includes(term)) ||
-      doc.unidadNombre.toLowerCase().includes(term) ||
-      doc.proveedorNombre.toLowerCase().includes(term) ||
-      doc.proveedorRfc.toLowerCase().includes(term) ||
-      doc.concepto.toLowerCase().includes(term) ||
-      getConceptName(doc).toLowerCase().includes(term) ||
-      getConceptKey(doc).toLowerCase().includes(term)
-    );
-  });
+  useEffect(() => {
+    if (isLoading) return;
 
-  const sortedDocs = [...filteredDocs].sort((a, b) => {
-    const values: Record<SortKey, [string, string]> = {
-      fecha: [a.fechaCreacion || "", b.fechaCreacion || ""],
-      folio: [a.folio || "BORRADOR", b.folio || "BORRADOR"],
-      nombre: [a.unidadNombre, b.unidadNombre],
-      concepto: [getConceptName(a), getConceptName(b)],
-      proveedor: [a.proveedorNombre, b.proveedorNombre]
+    let isActive = true;
+    const isBackgroundRefresh = hasLoadedPageRef.current;
+    setIsPageLoading(!isBackgroundRefresh);
+    setIsPageRefreshing(isBackgroundRefresh);
+    setListError(null);
+
+    listDocuments({
+      page: currentPage,
+      pageSize,
+      search: searchTerm,
+      dateFrom,
+      dateTo,
+      sortKey,
+      sortDirection
+    })
+      .then(result => {
+        if (!isActive) return;
+        hasLoadedPageRef.current = true;
+        setPageDocuments(result.documents);
+        setTotalDocuments(result.total);
+        setSelectedDocumentIds(selectedIds => {
+          const visibleIds = new Set(result.documents.map(document => document.id));
+          return selectedIds.filter(id => visibleIds.has(id));
+        });
+
+        const nextTotalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
+        if (currentPage > nextTotalPages) {
+          setCurrentPage(nextTotalPages);
+        }
+      })
+      .catch(error => {
+        if (!isActive) return;
+        console.error("Error loading paginated CLC documents", error);
+        if (!isBackgroundRefresh) {
+          setPageDocuments([]);
+          setTotalDocuments(0);
+          setListError(error instanceof Error ? error.message : "No se pudo cargar el historial paginado.");
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsPageLoading(false);
+          setIsPageRefreshing(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
     };
-    const [aValue, bValue] = values[sortKey];
-    return aValue.localeCompare(bValue, "es", { numeric: true, sensitivity: "base" }) * (sortDirection === "asc" ? 1 : -1);
-  });
+  }, [
+    isLoading,
+    currentPage,
+    pageSize,
+    searchTerm,
+    dateFrom,
+    dateTo,
+    sortKey,
+    sortDirection,
+    documentsVersion
+  ]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedDocs.length / pageSize));
+  useEffect(() => {
+    setSelectedDocumentIds([]);
+  }, [currentPage, pageSize, searchTerm, dateFrom, dateTo, sortKey, sortDirection]);
+
+  const totalPages = Math.max(1, Math.ceil(totalDocuments / pageSize));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStart = (safeCurrentPage - 1) * pageSize;
-  const paginatedDocs = sortedDocs.slice(pageStart, pageStart + pageSize);
+  const isTableLoading = isLoading || isPageLoading;
 
-  const selectedDocs = documents.filter(doc => selectedDocumentIds.includes(doc.id));
+  const selectedDocs = pageDocuments.filter(doc => selectedDocumentIds.includes(doc.id));
 
 const areAllPageDocsSelected =
-  paginatedDocs.length > 0 &&
-  paginatedDocs.every(doc => selectedDocumentIds.includes(doc.id));
+  pageDocuments.length > 0 &&
+  pageDocuments.every(doc => selectedDocumentIds.includes(doc.id));
 
 const handleDownloadSelectedExcel = async () => {
   for (const doc of selectedDocs) {
@@ -200,10 +248,10 @@ const handleDownloadSelectedPDF = async () => {
   setSelectedDocumentIds([]);
 };
 
-  const firstVisible = sortedDocs.length === 0 ? 0 : pageStart + 1;
-  const lastVisible = Math.min(pageStart + pageSize, sortedDocs.length);
+  const firstVisible = totalDocuments === 0 ? 0 : pageStart + 1;
+  const lastVisible = Math.min(pageStart + pageDocuments.length, totalDocuments);
 
-  const getDocById = (id: string) => documents.find(d => d.id === id);
+  const getDocById = (id: string) => pageDocuments.find(d => d.id === id);
   const selectedDoc = selectedDocId ? getDocById(selectedDocId) : null;
   const selectedDocPreviewKey = useMemo(() => selectedDoc ? JSON.stringify(selectedDoc) : "", [selectedDoc]);
 
@@ -270,12 +318,20 @@ const handleDownloadSelectedPDF = async () => {
         {/* Header & filters bar */}
         <div className="p-5 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white">
           <div>
-            <h2 className="text-base font-bold text-slate-800">Historial de Expedientes (CLC)</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-800">Historial de Expedientes (CLC)</h2>
+              {isPageRefreshing && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400" role="status">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Actualizando...
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              {isLoading ? (
+              {isTableLoading ? (
                 "Cargando expedientes registrados..."
               ) : (
-                <>Consulta, imprime, descarga o edita borradores. Mostrando <strong className="text-indigo-600 font-bold">{filteredDocs.length}</strong> de <strong className="text-slate-700">{documents.length}</strong> registros.</>
+                <>Consulta, imprime, descarga o edita borradores. Mostrando <strong className="text-indigo-600 font-bold">{firstVisible}-{lastVisible}</strong> de <strong className="text-slate-700">{totalDocuments}</strong> registros.</>
               )}
             </p>
           </div>
@@ -396,12 +452,18 @@ const handleDownloadSelectedPDF = async () => {
         </div>
 
         {/* List Content Table */}
-        {isLoading ? (
+        {isTableLoading ? (
           <div className="p-16 text-center" role="status" aria-live="polite">
             <div className="mx-auto h-2 w-32 animate-pulse rounded-full bg-slate-200" />
             <p className="text-xs text-slate-500 font-semibold mt-4">Cargando historial de expedientes...</p>
           </div>
-        ) : filteredDocs.length === 0 ? (
+        ) : listError ? (
+          <div className="p-16 text-center">
+            <FileText className="h-12 w-12 text-rose-300 mx-auto stroke-1" />
+            <p className="text-xs text-rose-700 font-semibold mt-3">No se pudo cargar el historial de expedientes.</p>
+            <p className="text-[11px] text-rose-500 mt-1">{listError}</p>
+          </div>
+        ) : pageDocuments.length === 0 ? (
           <div className="p-16 text-center">
             <FileText className="h-12 w-12 text-slate-300 mx-auto stroke-1" />
             <p className="text-xs text-slate-500 font-semibold mt-3">No se encontraron expedientes con los criterios de búsqueda.</p>
@@ -452,7 +514,7 @@ const handleDownloadSelectedPDF = async () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {paginatedDocs.map(doc => {
+                {pageDocuments.map(doc => {
                   const isSelected = selectedDocId === doc.id;
                   
                   return (
@@ -619,7 +681,7 @@ const handleDownloadSelectedPDF = async () => {
           </div>
         )}
 
-        {filteredDocs.length > 0 && (
+        {totalDocuments > 0 && (
           <div className="bg-white px-5 py-3 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-[11px] text-slate-500 font-semibold">
               <span>Mostrar</span>
@@ -641,7 +703,7 @@ const handleDownloadSelectedPDF = async () => {
 
             <div className="flex items-center gap-3">
               <span className="text-[11px] text-slate-500 font-semibold">
-                {firstVisible}-{lastVisible} de {sortedDocs.length}
+                {firstVisible}-{lastVisible} de {totalDocuments}
               </span>
               <div className="flex items-center gap-1">
                 <button

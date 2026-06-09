@@ -15,7 +15,8 @@ import {
   ExpenseObject, 
   Signature,
   CLCDocument,
-  FolioCounter
+  FolioCounter,
+  FolioYearSummary
 } from "../types";
 import { Plus, Trash2, Edit2, Check, X, ShieldAlert, BookOpen, Layers, Search } from "lucide-react";
 import { AlertTriangle, CheckCircle2, Database, RefreshCw, Save } from "lucide-react";
@@ -29,6 +30,7 @@ interface CatalogManagerProps {
   onReload: () => void;
   documents: CLCDocument[];
   folioCounters: FolioCounter[];
+  folioYearSummaries?: FolioYearSummary[];
   onSetNextFolioNumber: (anio: number, nextNumber: number) => void | Promise<void>;
 }
 
@@ -47,6 +49,7 @@ export default function CatalogManager({
   onReload,
   documents,
   folioCounters,
+  folioYearSummaries = [],
   onSetNextFolioNumber
 }: CatalogManagerProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("unidades");
@@ -138,12 +141,14 @@ export default function CatalogManager({
   const filteredObjetos = catalogs.objetos.filter(item =>
     budgetSearchMatches(budgetSearch.objetos, item.clave, item.nombre)
   );
-  const highestExistingFolio = documents
+  const folioYearSummary = folioYearSummaries.find(summary => summary.anio === folioYear);
+  const localHighestExistingFolio = documents
     .filter(document => document.año === folioYear && document.estado === "finalizado")
     .reduce((max, document) => {
       const match = document.folio.match(/CLC-(\d+)\/\d+/);
       return Math.max(max, match ? Number.parseInt(match[1], 10) : 0);
     }, 0);
+  const highestExistingFolio = folioYearSummary?.highestFinalizedFolioNumber ?? localHighestExistingFolio;
   const configuredLastFolio = folioCounters.find(counter => counter.anio === folioYear)?.lastNumber || 0;
   const suggestedNextFolio = Math.max(highestExistingFolio, configuredLastFolio) + 1;
 
