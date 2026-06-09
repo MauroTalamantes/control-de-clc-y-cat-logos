@@ -34,6 +34,7 @@ import {
 type ViewMode = "lista" | "catalogos" | "crear";
 type StorageMode = "supabase" | "electron" | "browser";
 type CatalogSyncStatus = "idle" | "loading" | "saving" | "saved" | "error";
+type DocumentSyncStatus = "connected" | "refreshing" | "error";
 
 const EMPTY_DOCUMENT_METRICS: AppDocumentMetrics = {
   totalDocuments: 0,
@@ -96,6 +97,7 @@ export default function App() {
   const [documentMetrics, setDocumentMetrics] = useState<AppDocumentMetrics>(EMPTY_DOCUMENT_METRICS);
   const [folioYearSummaries, setFolioYearSummaries] = useState<FolioYearSummary[]>([]);
   const [documentListRefreshKey, setDocumentListRefreshKey] = useState(0);
+  const [documentSyncStatus, setDocumentSyncStatus] = useState<DocumentSyncStatus>("refreshing");
   const [isInitialDataLoading, setIsInitialDataLoading] = useState(true);
   const [editingDoc, setEditingDoc] = useState<CLCDocument | null>(null);
   const [storageMode, setStorageMode] = useState<StorageMode>("browser");
@@ -137,6 +139,7 @@ export default function App() {
         applyAppMeta(snapshot);
         setCatalogSyncStatus("idle");
         setCatalogSyncError(null);
+        setDocumentSyncStatus("connected");
         setIsInitialDataLoading(false);
         if (snapshot.storageMode === "supabase") {
           setSimulationLog(prev => [
@@ -164,6 +167,7 @@ export default function App() {
         setDocuments(INITIAL_DOCUMENTS);
         setCatalogSyncStatus("error");
         setCatalogSyncError("No se pudo cargar la base de datos configurada.");
+        setDocumentSyncStatus("error");
         setIsInitialDataLoading(false);
         setSimulationLog(prev => [
           {
@@ -189,14 +193,17 @@ export default function App() {
     const refreshAppMeta = async () => {
       if (isRefreshing) return;
       isRefreshing = true;
+      setDocumentSyncStatus("refreshing");
       try {
         const snapshot = await loadAppMetaData();
         if (!isMounted) return;
         applyAppMeta(snapshot, { updateDocuments: false });
+        setDocumentSyncStatus("connected");
         if (viewMode === "lista") {
           refreshDocumentList();
         }
       } catch (error) {
+        if (isMounted) setDocumentSyncStatus("error");
         console.error("Error refreshing Supabase app metadata", error);
       } finally {
         isRefreshing = false;
@@ -602,6 +609,7 @@ export default function App() {
           <CLCViewer
             documents={documents}
             refreshToken={documentListRefreshKey}
+            syncStatus={documentSyncStatus}
             isLoading={isInitialDataLoading}
             onEdit={handleStartEdit}
             onDelete={handleDeleteDocument}

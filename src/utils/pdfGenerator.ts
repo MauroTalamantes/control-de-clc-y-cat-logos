@@ -6,8 +6,17 @@
 import { CLCDocument } from "../types";
 import { generateExcelBuffer, getDocExportBaseName } from "./excelGenerator";
 
-const MAX_PREVIEW_CACHE_ENTRIES = 10;
-const previewBytesCache = new Map<string, Promise<Uint8Array>>();
+const MAX_PREVIEW_CACHE_ENTRIES = 6;
+const MAX_PREVIEW_CACHE_BYTES = 16 * 1024 * 1024;
+
+type PreviewCacheEntry = {
+  promise: Promise<Uint8Array>;
+  byteLength: number;
+  settled: boolean;
+};
+
+const previewBytesCache = new Map<string, PreviewCacheEntry>();
+let previewBytesCacheSize = 0;
 
 function requireDesktopPdfSupport() {
   if (!window.clcFile) {
@@ -20,31 +29,56 @@ function getPreviewCacheKey(doc: CLCDocument) {
   return JSON.stringify(doc);
 }
 
+function prunePreviewBytesCache(protectedKey: string) {
+  while (
+    previewBytesCache.size > MAX_PREVIEW_CACHE_ENTRIES ||
+    previewBytesCacheSize > MAX_PREVIEW_CACHE_BYTES
+  ) {
+    const oldest = Array.from(previewBytesCache.entries()).find(
+      ([key, entry]) => key !== protectedKey && entry.settled
+    );
+    if (!oldest) break;
+
+    const [oldestKey, oldestEntry] = oldest;
+    previewBytesCache.delete(oldestKey);
+    previewBytesCacheSize -= oldestEntry.byteLength;
+  }
+}
+
 function getCachedPreviewBytes(doc: CLCDocument) {
   const cacheKey = getPreviewCacheKey(doc);
   const cached = previewBytesCache.get(cacheKey);
   if (cached) {
     previewBytesCache.delete(cacheKey);
     previewBytesCache.set(cacheKey, cached);
-    return cached;
+    return cached.promise;
   }
 
+  let entry: PreviewCacheEntry;
   const previewPromise = (async () => {
     const clcFile = requireDesktopPdfSupport();
     const excelBuffer = await generateExcelBuffer(doc);
     const result = await clcFile.createPdf(excelBuffer);
     return result.bytes;
-  })().catch(error => {
-    previewBytesCache.delete(cacheKey);
-    throw error;
-  });
+  })()
+    .then(bytes => {
+      entry.settled = true;
+      entry.byteLength = bytes.byteLength;
+      previewBytesCacheSize += bytes.byteLength;
+      prunePreviewBytesCache(cacheKey);
+      return bytes;
+    })
+    .catch(error => {
+      if (previewBytesCache.get(cacheKey) === entry) {
+        previewBytesCache.delete(cacheKey);
+        previewBytesCacheSize -= entry.byteLength;
+      }
+      throw error;
+    });
 
-  previewBytesCache.set(cacheKey, previewPromise);
-  while (previewBytesCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
-    const oldestKey = previewBytesCache.keys().next().value;
-    if (oldestKey === undefined) break;
-    previewBytesCache.delete(oldestKey);
-  }
+  entry = { promise: previewPromise, byteLength: 0, settled: false };
+  previewBytesCache.set(cacheKey, entry);
+  prunePreviewBytesCache(cacheKey);
 
   return previewPromise;
 }

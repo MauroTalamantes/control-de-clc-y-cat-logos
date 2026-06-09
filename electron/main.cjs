@@ -1,18 +1,25 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
-const { execFile } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { promisify } = require("node:util");
 
-const execFileAsync = promisify(execFile);
 const AUTO_UPDATE_CHECK_DELAY_MS = 15_000;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const MAX_PDF_CACHE_ENTRIES = 12;
+const EXCEL_PDF_CONVERSION_TIMEOUT_MS = 120_000;
+const EXCEL_PDF_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_EXCEL_PDF_CONVERSIONS_PER_WORKER = 100;
+const EXCEL_PDF_WORKER_PATH = app.isPackaged
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "electron", "excel-pdf-worker.ps1")
+  : path.join(__dirname, "excel-pdf-worker.ps1");
+const MAX_PDF_CACHE_ENTRIES = 8;
+const MAX_PDF_CACHE_BYTES = 32 * 1024 * 1024;
 const pdfBufferCache = new Map();
 const pendingPdfConversions = new Map();
+let pdfBufferCacheBytes = 0;
+let excelPdfWorkerState = null;
 
 // The app is form/report oriented and does not need GPU rendering. Some Windows
 // graphics drivers can leave Chromium's accelerated surface stale until the
@@ -166,44 +173,195 @@ async function removeTemporaryExport(paths) {
   );
 }
 
-async function convertExcelFileToPdf(xlsxPath, pdfPath) {
-  const powershellLiteral = value => `'${String(value).replace(/'/g, "''")}'`;
-  const script = `
-$ErrorActionPreference = 'Stop'
-$xlsxPath = ${powershellLiteral(xlsxPath)}
-$pdfPath = ${powershellLiteral(pdfPath)}
-$excel = $null
-$workbook = $null
-try {
-  $excel = New-Object -ComObject Excel.Application
-  $excel.Visible = $false
-  $excel.DisplayAlerts = $false
-  $workbook = $excel.Workbooks.Open($xlsxPath, 0, $true)
-  $workbook.ExportAsFixedFormat(0, $pdfPath)
-}
-finally {
-  if ($workbook -ne $null) {
-    $workbook.Close($false)
-    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($workbook)
+function failExcelPdfWorker(state, error) {
+  if (!state.ready) state.rejectReady(error);
+  for (const request of state.pending.values()) {
+    clearTimeout(request.timeoutId);
+    request.reject(error);
   }
-  if ($excel -ne $null) {
-    $excel.Quit()
-    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
-  }
-  [GC]::Collect()
-  [GC]::WaitForPendingFinalizers()
+  state.pending.clear();
+  if (excelPdfWorkerState === state) excelPdfWorkerState = null;
 }
-`;
-  const encodedCommand = Buffer.from(script, "utf16le").toString("base64");
 
-  await execFileAsync(
+function handleExcelPdfWorkerMessage(state, message) {
+  if (message?.type === "ready") {
+    state.ready = true;
+    state.resolveReady(state);
+    scheduleExcelPdfWorkerIdleShutdown(state);
+    return;
+  }
+
+  if (message?.type === "fatal") {
+    const error = new Error(message.error || "Microsoft Excel no pudo iniciar.");
+    failExcelPdfWorker(state, error);
+    if (!state.process.killed) state.process.kill();
+    return;
+  }
+
+  if (message?.type !== "result") return;
+  const requestId = String(message.id);
+  const request = state.pending.get(requestId);
+  if (!request) return;
+
+  state.pending.delete(requestId);
+  clearTimeout(request.timeoutId);
+  state.completedConversions += 1;
+  if (message.ok) request.resolve();
+  else request.reject(new Error(message.error || "Microsoft Excel no pudo generar el PDF."));
+
+  if (state.pending.size === 0) {
+    if (state.completedConversions >= MAX_EXCEL_PDF_CONVERSIONS_PER_WORKER) {
+      shutdownExcelPdfWorker(state);
+    } else {
+      scheduleExcelPdfWorkerIdleShutdown(state);
+    }
+  }
+}
+
+function consumeExcelPdfWorkerOutput(state, chunk) {
+  state.outputBuffer += chunk;
+  let newlineIndex = state.outputBuffer.indexOf("\n");
+  while (newlineIndex >= 0) {
+    const line = state.outputBuffer.slice(0, newlineIndex).trim();
+    state.outputBuffer = state.outputBuffer.slice(newlineIndex + 1);
+    if (line) {
+      try {
+        handleExcelPdfWorkerMessage(state, JSON.parse(line));
+      } catch (error) {
+        console.warn("Could not parse Excel PDF worker response.", error);
+      }
+    }
+    newlineIndex = state.outputBuffer.indexOf("\n");
+  }
+}
+
+function ensureExcelPdfWorker() {
+  if (excelPdfWorkerState) return excelPdfWorkerState.readyPromise;
+
+  const workerProcess = spawn(
     "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedCommand],
-    { windowsHide: true, timeout: 120000 }
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", EXCEL_PDF_WORKER_PATH],
+    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
   );
+
+  const state = {
+    process: workerProcess,
+    pending: new Map(),
+    outputBuffer: "",
+    stderr: "",
+    ready: false,
+    intentionalShutdown: false,
+    requestId: 0,
+    completedConversions: 0
+  };
+  state.readyPromise = new Promise((resolve, reject) => {
+    state.resolveReady = resolve;
+    state.rejectReady = reject;
+  });
+  excelPdfWorkerState = state;
+
+  workerProcess.stdout.setEncoding("utf8");
+  workerProcess.stdout.on("data", chunk => consumeExcelPdfWorkerOutput(state, chunk));
+  workerProcess.stderr.setEncoding("utf8");
+  workerProcess.stderr.on("data", chunk => {
+    state.stderr += chunk;
+  });
+  workerProcess.on("error", error => {
+    failExcelPdfWorker(state, error);
+  });
+  workerProcess.on("exit", (code, signal) => {
+    if (state.shutdownTimer) clearTimeout(state.shutdownTimer);
+    if (state.intentionalShutdown) {
+      failExcelPdfWorker(state, new Error("El conversor de PDF se cerro."));
+      return;
+    }
+    const details = state.stderr.trim();
+    const suffix = details ? ` ${details}` : "";
+    failExcelPdfWorker(
+      state,
+      new Error(`El conversor de PDF termino inesperadamente (${code ?? signal ?? "sin codigo"}).${suffix}`)
+    );
+  });
+
+  return state.readyPromise;
+}
+
+async function convertExcelFileToPdf(xlsxPath, pdfPath) {
+  const state = await ensureExcelPdfWorker();
+  const requestId = String(++state.requestId);
+  if (state.idleTimer) {
+    clearTimeout(state.idleTimer);
+    state.idleTimer = null;
+  }
+
+  await new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      state.pending.delete(requestId);
+      reject(new Error("Microsoft Excel excedio el tiempo limite para generar el PDF."));
+      failExcelPdfWorker(state, new Error("El conversor de PDF dejo de responder."));
+      if (!state.process.killed) state.process.kill();
+    }, EXCEL_PDF_CONVERSION_TIMEOUT_MS);
+
+    state.pending.set(requestId, { resolve, reject, timeoutId });
+    state.process.stdin.write(
+      `${JSON.stringify({ type: "convert", id: requestId, xlsxPath, pdfPath })}\n`,
+      "utf8",
+      error => {
+        if (!error) return;
+        state.pending.delete(requestId);
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
+  });
 
   if (!fs.existsSync(pdfPath)) {
     throw new Error("Microsoft Excel no generó el archivo PDF.");
+  }
+}
+
+function scheduleExcelPdfWorkerIdleShutdown(state) {
+  if (state.idleTimer) clearTimeout(state.idleTimer);
+  state.idleTimer = setTimeout(() => {
+    if (state.pending.size === 0 && excelPdfWorkerState === state) {
+      shutdownExcelPdfWorker(state);
+    }
+  }, EXCEL_PDF_IDLE_TIMEOUT_MS);
+}
+
+function shutdownExcelPdfWorker(workerState = excelPdfWorkerState) {
+  const state = workerState;
+  if (!state || state.intentionalShutdown) return;
+
+  if (excelPdfWorkerState === state) excelPdfWorkerState = null;
+  state.intentionalShutdown = true;
+  if (state.idleTimer) clearTimeout(state.idleTimer);
+  try {
+    state.process.stdin.end(`${JSON.stringify({ type: "shutdown" })}\n`);
+  } catch (error) {
+    console.warn("Could not close Excel PDF worker gracefully.", error);
+  }
+  state.shutdownTimer = setTimeout(() => {
+    if (!state.process.killed) state.process.kill();
+  }, 5_000);
+}
+
+function cachePdfBuffer(cacheKey, pdfBuffer) {
+  const previous = pdfBufferCache.get(cacheKey);
+  if (previous) {
+    pdfBufferCacheBytes -= previous.byteLength;
+    pdfBufferCache.delete(cacheKey);
+  }
+
+  pdfBufferCache.set(cacheKey, pdfBuffer);
+  pdfBufferCacheBytes += pdfBuffer.byteLength;
+
+  while (pdfBufferCache.size > MAX_PDF_CACHE_ENTRIES || pdfBufferCacheBytes > MAX_PDF_CACHE_BYTES) {
+    const oldestKey = pdfBufferCache.keys().next().value;
+    if (oldestKey === undefined || (oldestKey === cacheKey && pdfBufferCache.size === 1)) break;
+    const oldestBuffer = pdfBufferCache.get(oldestKey);
+    if (oldestBuffer) pdfBufferCacheBytes -= oldestBuffer.byteLength;
+    pdfBufferCache.delete(oldestKey);
   }
 }
 
@@ -214,22 +372,17 @@ async function createPdfBufferFromExcel(bytes) {
   if (cachedPdf) {
     pdfBufferCache.delete(cacheKey);
     pdfBufferCache.set(cacheKey, cachedPdf);
-    return Buffer.from(cachedPdf);
+    return cachedPdf;
   }
 
   const pendingConversion = pendingPdfConversions.get(cacheKey);
   if (pendingConversion) {
-    return Buffer.from(await pendingConversion);
+    return pendingConversion;
   }
 
   const conversionPromise = createUncachedPdfBufferFromExcel(excelBuffer)
     .then(pdfBuffer => {
-      pdfBufferCache.set(cacheKey, pdfBuffer);
-      while (pdfBufferCache.size > MAX_PDF_CACHE_ENTRIES) {
-        const oldestKey = pdfBufferCache.keys().next().value;
-        if (oldestKey === undefined) break;
-        pdfBufferCache.delete(oldestKey);
-      }
+      cachePdfBuffer(cacheKey, pdfBuffer);
       return pdfBuffer;
     })
     .finally(() => {
@@ -237,7 +390,7 @@ async function createPdfBufferFromExcel(bytes) {
     });
 
   pendingPdfConversions.set(cacheKey, conversionPromise);
-  return Buffer.from(await conversionPromise);
+  return conversionPromise;
 }
 
 async function createUncachedPdfBufferFromExcel(excelBuffer) {
@@ -380,6 +533,11 @@ function createWindow() {
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("The main window renderer process ended.", details);
+  });
+  mainWindow.webContents.once("did-finish-load", () => {
+    void ensureExcelPdfWorker().catch(error => {
+      console.warn("Could not warm up Excel PDF worker.", error);
+    });
   });
 
   setupAutoUpdates(mainWindow);
@@ -564,4 +722,8 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  shutdownExcelPdfWorker();
 });

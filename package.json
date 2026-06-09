@@ -24,6 +24,9 @@
   "build": {
     "appId": "mx.gob.guadalupe.control-clc",
     "productName": "Control de CLC y Catalogos",
+    "asarUnpack": [
+      "electron/excel-pdf-worker.ps1"
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",

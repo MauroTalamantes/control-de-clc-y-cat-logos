@@ -23,6 +23,7 @@ import {
 interface CLCViewerProps {
   documents: CLCDocument[];
   refreshToken?: number;
+  syncStatus?: "connected" | "refreshing" | "error";
   isLoading: boolean;
   onEdit: (doc: CLCDocument) => void;
   onDelete: (id: string) => void;
@@ -32,10 +33,12 @@ type SortKey = "fecha" | "folio" | "nombre" | "concepto" | "proveedor";
 type SortDirection = "asc" | "desc";
 type TooltipState = { text: string; left: number; top: number } | null;
 type ExportAction = { docId: string; type: "excel" | "pdf" } | null;
+const MAX_OFFICIAL_PREVIEW_URLS = 4;
 
 export default function CLCViewer({ 
   documents,
   refreshToken = 0,
+  syncStatus = "connected",
   isLoading,
   onEdit, 
   onDelete
@@ -60,6 +63,7 @@ export default function CLCViewer({
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [isPageLoading, setIsPageLoading] = useState(false);
   const [isPageRefreshing, setIsPageRefreshing] = useState(false);
+  const [hasPageRefreshError, setHasPageRefreshError] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const dateFilterRef = useRef<HTMLDivElement>(null);
   const officialPreviewCacheRef = useRef<Map<string, string>>(new Map());
@@ -176,6 +180,7 @@ export default function CLCViewer({
       .then(result => {
         if (!isActive) return;
         hasLoadedPageRef.current = true;
+        setHasPageRefreshError(false);
         setPageDocuments(result.documents);
         setTotalDocuments(result.total);
         setSelectedDocumentIds(selectedIds => {
@@ -196,6 +201,7 @@ export default function CLCViewer({
           setTotalDocuments(0);
           setListError(error instanceof Error ? error.message : "No se pudo cargar el historial paginado.");
         }
+        setHasPageRefreshError(true);
       })
       .finally(() => {
         if (isActive) {
@@ -227,6 +233,12 @@ export default function CLCViewer({
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const pageStart = (safeCurrentPage - 1) * pageSize;
   const isTableLoading = isLoading || isPageLoading;
+  const hasSyncError = syncStatus === "error" || hasPageRefreshError;
+  const syncIndicatorLabel = hasSyncError
+    ? "No se pudo actualizar la lista"
+    : syncStatus === "refreshing" || isPageRefreshing
+      ? "Sincronizando expedientes"
+      : "Sincronización activa";
 
   const selectedDocs = pageDocuments.filter(doc => selectedDocumentIds.includes(doc.id));
 
@@ -275,6 +287,8 @@ const handleDownloadSelectedPDF = async () => {
     let isActive = true;
     const cachedUrl = officialPreviewCacheRef.current.get(selectedDocPreviewKey);
     if (cachedUrl) {
+      officialPreviewCacheRef.current.delete(selectedDocPreviewKey);
+      officialPreviewCacheRef.current.set(selectedDocPreviewKey, cachedUrl);
       setOfficialPreviewUrl(cachedUrl);
       setOfficialPreviewStatus("ready");
       setOfficialPreviewError(null);
@@ -294,6 +308,13 @@ const handleDownloadSelectedPDF = async () => {
           return;
         }
         officialPreviewCacheRef.current.set(selectedDocPreviewKey, url);
+        while (officialPreviewCacheRef.current.size > MAX_OFFICIAL_PREVIEW_URLS) {
+          const oldestKey = officialPreviewCacheRef.current.keys().next().value;
+          if (oldestKey === undefined || oldestKey === selectedDocPreviewKey) break;
+          const oldestUrl = officialPreviewCacheRef.current.get(oldestKey);
+          if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+          officialPreviewCacheRef.current.delete(oldestKey);
+        }
         setOfficialPreviewUrl(url);
         setOfficialPreviewStatus("ready");
       })
@@ -320,12 +341,20 @@ const handleDownloadSelectedPDF = async () => {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-800">Historial de Expedientes (CLC)</h2>
-              {isPageRefreshing && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400" role="status">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Actualizando...
-                </span>
-              )}
+              <span
+                className="inline-flex items-center"
+                role="status"
+                title={syncIndicatorLabel}
+                aria-label={syncIndicatorLabel}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    hasSyncError
+                      ? "bg-rose-500 shadow-[0_0_0_2px_rgba(244,63,94,0.12)]"
+                      : "bg-emerald-500/85 shadow-[0_0_0_2px_rgba(16,185,129,0.10)] animate-pulse [animation-duration:3.5s]"
+                  }`}
+                />
+              </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               {isTableLoading ? (
