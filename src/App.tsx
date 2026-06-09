@@ -18,20 +18,10 @@ import { downloadDocExcel } from "./utils/excelGenerator";
 import CatalogManager from "./components/CatalogManager";
 import CLCForm from "./components/CLCForm";
 import CLCViewer from "./components/CLCViewer";
-import { 
-  Building2, 
-  Layers, 
-  FileText, 
-  Plus, 
-  Activity, 
-  TrendingUp, 
-  Sparkles, 
-  FileSpreadsheet, 
-  HelpCircle,
-  Clock
-} from "lucide-react";
+import AppShell, { type AppSection } from "./components/AppShell";
 
 type ViewMode = "lista" | "catalogos" | "crear";
+type CatalogTarget = "unidades" | "proveedores" | "folios";
 type StorageMode = "supabase" | "electron" | "browser";
 type CatalogSyncStatus = "idle" | "loading" | "saving" | "saved" | "error";
 type DocumentSyncStatus = "connected" | "refreshing" | "error";
@@ -91,6 +81,7 @@ function getConfiguredLastFolioNumber(folioCounters: FolioCounter[], year: numbe
 
 export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("lista");
+  const [catalogTarget, setCatalogTarget] = useState<CatalogTarget>("unidades");
   const [catalogs, setCatalogs] = useState<AppCatalogs>(INITIAL_CATALOGS);
   const [documents, setDocuments] = useState<CLCDocument[]>([]);
   const [folioCounters, setFolioCounters] = useState<FolioCounter[]>([]);
@@ -537,77 +528,41 @@ export default function App() {
     setViewMode("crear");
   };
 
+  const handleNavigate = (section: AppSection) => {
+    setEditingDoc(null);
+    if (section === "lista") {
+      setViewMode("lista");
+      return;
+    }
+
+    setViewMode("catalogos");
+    setCatalogTarget(section === "proveedores" ? "proveedores" : section === "parametros" ? "folios" : "unidades");
+  };
+
+  const activeSection: AppSection = viewMode === "catalogos"
+    ? catalogTarget === "proveedores"
+      ? "proveedores"
+      : catalogTarget === "folios"
+        ? "parametros"
+        : "catalogos"
+    : "lista";
+
+  const latestYear = folioYearSummaries[0]?.anio || new Date().getFullYear();
+
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col font-sans select-text">
-      
-      {/* Dynamic Header navbar */}
-      <header className="bg-white border-b border-slate-200/80 shadow-3xs sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
-          
-          {/* Logo brand */}
-          <div className="flex items-center gap-3">
-            {/* <div className="bg-gradient-to-br from-indigo-600 to-slate-900 p-2.5 rounded-xl text-white shadow-md shadow-indigo-900/10 shrink-0">
-              <Building2 className="h-6 w-6 text-indigo-50" />
-            </div> */}
-            <img 
-              src="https://gpe.gob.mx/wp-content/uploads/2025/03/AYTO-GPE-GUINDA1-300x168.png" 
-              alt="Logo Ayuntamiento" 
-              className="h-12 w-auto object-contain shrink-0" 
-            />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold tracking-widest text-indigo-900 bg-indigo-50 border border-indigo-150 px-2 py-0.5 rounded-full select-none">
-                  AYUNTAMIENTO DE GUADALUPE 2024-2027
-                </span>
-                <span className="text-[10px] font-semibold text-slate-400">Guadalupe, Zacatecas</span>
-              </div>
-              <h1 className="text-md font-bold text-slate-800 flex items-center gap-1.5 mt-0.5">
-                Sistema de Gestión de Cuentas por Liquidar Certificadas.
-              </h1>
-            </div>
-          </div>
-
-          {/* Navigation Controls */}
-          <div className="flex items-center gap-2">
-            <button
-              id="nav-clc-list"
-              onClick={() => { setViewMode("lista"); setEditingDoc(null); }}
-              className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                viewMode === "lista" 
-                  ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20" 
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              Expedientes CLC
-            </button>
-            <button
-              id="nav-catalogs"
-              onClick={() => { setViewMode("catalogos"); setEditingDoc(null); }}
-              className={`px-4 py-2 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                viewMode === "catalogos" 
-                  ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20" 
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              Administrar Catálogos
-            </button>
-            <button
-              id="nav-create-clc"
-              onClick={() => { setViewMode("crear"); setEditingDoc(null); }}
-              className="bg-slate-900 hover:bg-slate-800 text-indigo-50 text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-            >
-              <Plus className="h-4 w-4" /> Nueva CLC
-            </button>
-          </div>
-
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <AppShell
+      activeSection={activeSection}
+      onNavigate={handleNavigate}
+      onCreate={() => { setViewMode("crear"); setEditingDoc(null); }}
+      periodLabel={`Ejercicio ${latestYear}`}
+    >
+      <main className="mx-auto w-full max-w-[1664px] px-4 pb-5 pt-0 sm:px-6 lg:px-8 lg:pb-7 lg:pt-0">
         {viewMode === "lista" && (
           <CLCViewer
             documents={documents}
+            documentMetrics={documentMetrics}
+            providerCount={catalogs.proveedores.length}
+            folioYearSummaries={folioYearSummaries}
             refreshToken={documentListRefreshKey}
             syncStatus={documentSyncStatus}
             isLoading={isInitialDataLoading}
@@ -628,6 +583,7 @@ export default function App() {
             folioCounters={folioCounters}
             folioYearSummaries={folioYearSummaries}
             onSetNextFolioNumber={handleSetNextFolioNumber}
+            initialTab={catalogTarget}
           />
         )}
 
@@ -641,13 +597,6 @@ export default function App() {
           />
         )}
       </main>
-
-      {/* Footer copyright */}
-      <footer className="bg-white border-t border-gray-100 py-6 text-center select-none text-[11px] text-gray-400">
-        <p>© 2026 Ayuntamiento de Guadalupe, Zacatecas - Comisión del Gasto Público Local.</p>
-        <p className="mt-1 font-mono text-[9px] text-gray-300">Modulo de Asignación y Control Fiscal Anti-Duplicado para CLC.</p>
-      </footer>
-
-    </div>
+    </AppShell>
   );
 }

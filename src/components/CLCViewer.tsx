@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { CLCDocument } from "../types";
+import { AppDocumentMetrics, CLCDocument, FolioYearSummary } from "../types";
 import { listDocuments } from "../utils/appStore";
 import { downloadDocExcel } from "../utils/excelGenerator";
 import { createDocPDFPreviewUrl, downloadDocPDF, printDocPDF } from "../utils/pdfGenerator";
@@ -19,9 +19,13 @@ import {
   Printer,
   Loader2
 } from "lucide-react";
+import { ClcFilters, ClcTable, HeroSection, SummaryCard, summaryIcons } from "./ClcDashboard";
 
 interface CLCViewerProps {
   documents: CLCDocument[];
+  documentMetrics: AppDocumentMetrics;
+  providerCount: number;
+  folioYearSummaries: FolioYearSummary[];
   refreshToken?: number;
   syncStatus?: "connected" | "refreshing" | "error";
   isLoading: boolean;
@@ -37,6 +41,9 @@ const MAX_OFFICIAL_PREVIEW_URLS = 4;
 
 export default function CLCViewer({ 
   documents,
+  documentMetrics,
+  providerCount,
+  folioYearSummaries,
   refreshToken = 0,
   syncStatus = "connected",
   isLoading,
@@ -111,12 +118,16 @@ export default function CLCViewer({
 
   const getConceptName = (doc: CLCDocument) => doc.items[0]?.objetoNombre || doc.concepto;
   const getConceptKey = (doc: CLCDocument) => doc.items[0]?.objetoClave || "-";
+  const formatFilterDate = (value: string) => {
+    const [year, month, day] = value.split("-");
+    return year && month && day ? `${day}/${month}/${year}` : value;
+  };
   const dateRangeLabel = dateFrom && dateTo
-    ? `${dateFrom} - ${dateTo}`
+    ? `${formatFilterDate(dateFrom)} - ${formatFilterDate(dateTo)}`
     : dateFrom
-      ? `Desde ${dateFrom}`
+      ? `Desde ${formatFilterDate(dateFrom)}`
       : dateTo
-        ? `Hasta ${dateTo}`
+        ? `Hasta ${formatFilterDate(dateTo)}`
         : "Filtrar fecha";
 
   const showTooltip = (event: MouseEvent<HTMLElement>, text: string) => {
@@ -266,6 +277,16 @@ const handleDownloadSelectedPDF = async () => {
   const getDocById = (id: string) => pageDocuments.find(d => d.id === id);
   const selectedDoc = selectedDocId ? getDocById(selectedDocId) : null;
   const selectedDocPreviewKey = useMemo(() => selectedDoc ? JSON.stringify(selectedDoc) : "", [selectedDoc]);
+  const latestFolioSummary = folioYearSummaries[0];
+  const latestFolio = latestFolioSummary?.highestFinalizedFolioNumber
+    ? `CLC-${String(latestFolioSummary.highestFinalizedFolioNumber).padStart(3, "0")}/${latestFolioSummary.anio}`
+    : "Sin folio";
+  const totalCaptured = new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(documentMetrics.totalInvoiced);
 
   useEffect(() => {
     return () => {
@@ -332,9 +353,76 @@ const handleDownloadSelectedPDF = async () => {
 
   return (
     <div className="space-y-6" id="clc-lists-viewer">
+      <HeroSection
+        syncIndicator={(
+          <span className="inline-flex items-center" role="status" title={syncIndicatorLabel} aria-label={syncIndicatorLabel}>
+            <span className={`h-1.5 w-1.5 rounded-full ${hasSyncError ? "bg-rose-400" : "bg-emerald-400 animate-pulse [animation-duration:3.5s]"}`} />
+          </span>
+        )}
+      />
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard icon={summaryIcons.total} label="Total de expedientes" value={documentMetrics.totalDocuments.toLocaleString("es-MX")} note="Registro acumulado" />
+        <SummaryCard icon={summaryIcons.providers} label="Proveedores registrados" value={providerCount.toLocaleString("es-MX")} note="Catálogo institucional" tone="slate" />
+        <SummaryCard icon={summaryIcons.amount} label="Total capturado" value={totalCaptured} note="Importe acumulado disponible" tone="green" />
+        <SummaryCard icon={summaryIcons.folio} label="Último folio generado" value={latestFolio} note={latestFolioSummary ? `Ejercicio ${latestFolioSummary.anio}` : "Sin registros disponibles"} tone="gold" />
+      </section>
+
+      <ClcFilters
+        searchTerm={searchTerm}
+        dateRangeLabel={dateRangeLabel}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        isDateFilterOpen={isDateFilterOpen}
+        dateFilterRef={dateFilterRef}
+        selectedCount={selectedDocumentIds.length}
+        onSearchChange={value => { setSearchTerm(value); setCurrentPage(1); }}
+        onToggleDateFilter={() => setIsDateFilterOpen(open => !open)}
+        onDateFromChange={value => { setDateFrom(value); setCurrentPage(1); }}
+        onDateToChange={value => { setDateTo(value); setCurrentPage(1); }}
+        onCloseDateFilter={() => setIsDateFilterOpen(false)}
+        onClear={() => {
+          setSearchTerm("");
+          setDateFrom("");
+          setDateTo("");
+          setCurrentPage(1);
+          setIsDateFilterOpen(false);
+        }}
+        onDownloadSelectedExcel={handleDownloadSelectedExcel}
+        onDownloadSelectedPDF={handleDownloadSelectedPDF}
+      />
+
+      <ClcTable
+        documents={pageDocuments}
+        isLoading={isTableLoading}
+        listError={listError}
+        selectedDocumentIds={selectedDocumentIds}
+        selectedDocId={selectedDocId}
+        activeExport={activeExport}
+        currentPage={safeCurrentPage}
+        totalPages={totalPages}
+        firstVisible={firstVisible}
+        lastVisible={lastVisible}
+        totalDocuments={totalDocuments}
+        pageSize={pageSize}
+        sortIndicator={sortIndicator}
+        onSort={handleSort}
+        onSelectAll={handleSelectAllDocs}
+        onSelect={handleSelectDoc}
+        onOpenPreview={openPreview}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDownloadExcel={handleDownloadExcel}
+        onDownloadPDF={handleDownloadPDF}
+        onPageSizeChange={size => { setPageSize(size); setCurrentPage(1); }}
+        onPageChange={setCurrentPage}
+        onShowTooltip={showTooltip}
+        onHideTooltip={() => setActiveTooltip(null)}
+      />
       
       {/* 1. DOCUMENTS LIST (Full modular width with spacious padding) */}
-      <div className="bg-white rounded-xl shadow-xs border border-gray-200 overflow-hidden">
+      {false && (
+      <div>
         
         {/* Header & filters bar */}
         <div className="p-5 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white">
@@ -360,7 +448,7 @@ const handleDownloadSelectedPDF = async () => {
               {isTableLoading ? (
                 "Cargando expedientes registrados..."
               ) : (
-                <>Consulta, imprime, descarga o edita borradores. Mostrando <strong className="text-indigo-600 font-bold">{firstVisible}-{lastVisible}</strong> de <strong className="text-slate-700">{totalDocuments}</strong> registros.</>
+                <>Consulta, imprime, descarga o edita expedientes. Mostrando <strong className="text-indigo-600 font-bold">{firstVisible}-{lastVisible}</strong> de <strong className="text-slate-700">{totalDocuments}</strong> registros.</>
               )}
             </p>
           </div>
@@ -568,7 +656,7 @@ const handleDownloadSelectedPDF = async () => {
                       <td className="p-3 align-middle overflow-hidden">
                         <div className="space-y-1">
                           <span className="inline-block max-w-full whitespace-nowrap font-mono font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full text-[10px]">
-                            {doc.folio || "BORRADOR"}
+                            {doc.folio || "SIN FOLIO"}
                           </span>
                         </div>
                       </td>
@@ -760,6 +848,7 @@ const handleDownloadSelectedPDF = async () => {
         )}
 
       </div>
+      )}
 
       {/* 2. DYNAMIC PREVIEW MODAL OVERLAY (Shown on select row) */}
 
@@ -863,7 +952,7 @@ const handleDownloadSelectedPDF = async () => {
                 )}
                 {officialPreviewStatus === "ready" && officialPreviewUrl && (
                   <iframe
-                    title={`Formato oficial ${selectedDoc.folio || "borrador"}`}
+                    title={`Formato oficial ${selectedDoc.folio || "sin folio"}`}
                     src={officialPreviewUrl}
                     className="h-full min-h-80 w-full rounded-xl border border-slate-300 bg-white shadow-sm"
                   />
@@ -896,7 +985,7 @@ const handleDownloadSelectedPDF = async () => {
                       <div className="w-3 h-3 bg-gray-900"></div>
                     </div>
                     <span id="preview-folio-badge" className="text-[11px] font-mono font-black text-red-650 tracking-wider">
-                      {selectedDoc.folio || "BORRADOR SIN FOLIO"}
+                      {selectedDoc.folio || "SIN FOLIO"}
                     </span>
                   </div>
                 </div>
@@ -1058,7 +1147,7 @@ const handleDownloadSelectedPDF = async () => {
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Vista rapida de datos</span>
-                        <h4 className="text-lg font-black text-slate-900 mt-1">{selectedDoc.folio || "BORRADOR SIN FOLIO"}</h4>
+                        <h4 className="text-lg font-black text-slate-900 mt-1">{selectedDoc.folio || "SIN FOLIO"}</h4>
                         <p className="text-xs text-slate-500 mt-1">{selectedDoc.concepto}</p>
                       </div>
                       <div className="text-right">

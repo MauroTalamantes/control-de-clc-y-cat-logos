@@ -32,9 +32,10 @@ interface CatalogManagerProps {
   folioCounters: FolioCounter[];
   folioYearSummaries?: FolioYearSummary[];
   onSetNextFolioNumber: (anio: number, nextNumber: number) => void | Promise<void>;
+  initialTab?: ActiveTab;
 }
 
-type ActiveTab = "unidades" | "bancos" | "proveedores" | "presupuesto" | "firmas" | "folios";
+export type ActiveTab = "unidades" | "bancos" | "proveedores" | "presupuesto" | "firmas" | "folios";
 type NewRecordId = "new_unidad" | "new_banco_nombre" | "new_banco" | "new_proveedor" | "new_firma" | "new_f" | "new_pr" | "new_o";
 type BudgetSearchKey = "fuentes" | "proyectos" | "objetos";
 
@@ -50,15 +51,21 @@ export default function CatalogManager({
   documents,
   folioCounters,
   folioYearSummaries = [],
-  onSetNextFolioNumber
+  onSetNextFolioNumber,
+  initialTab = "unidades"
 }: CatalogManagerProps) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("unidades");
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
   const [folioYear, setFolioYear] = useState(new Date().getFullYear());
   const [nextFolioNumber, setNextFolioNumberInput] = useState("");
   const [isSavingFolio, setIsSavingFolio] = useState(false);
   
   // Local state for editing or adding items
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+    setEditingId(null);
+  }, [initialTab]);
   
   // Temporary form states
   const [unidadForm, setUnidadForm] = useState<Partial<AdministrativeUnit>>({});
