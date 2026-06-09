@@ -6,6 +6,9 @@
 import { CLCDocument } from "../types";
 import { generateExcelBuffer, getDocExportBaseName } from "./excelGenerator";
 
+const MAX_PREVIEW_CACHE_ENTRIES = 10;
+const previewBytesCache = new Map<string, Promise<Uint8Array>>();
+
 function requireDesktopPdfSupport() {
   if (!window.clcFile) {
     throw new Error("La generación de PDF oficial está disponible en la aplicación de escritorio.");
@@ -13,11 +16,42 @@ function requireDesktopPdfSupport() {
   return window.clcFile;
 }
 
+function getPreviewCacheKey(doc: CLCDocument) {
+  return JSON.stringify(doc);
+}
+
+function getCachedPreviewBytes(doc: CLCDocument) {
+  const cacheKey = getPreviewCacheKey(doc);
+  const cached = previewBytesCache.get(cacheKey);
+  if (cached) {
+    previewBytesCache.delete(cacheKey);
+    previewBytesCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const previewPromise = (async () => {
+    const clcFile = requireDesktopPdfSupport();
+    const excelBuffer = await generateExcelBuffer(doc);
+    const result = await clcFile.createPdf(excelBuffer);
+    return result.bytes;
+  })().catch(error => {
+    previewBytesCache.delete(cacheKey);
+    throw error;
+  });
+
+  previewBytesCache.set(cacheKey, previewPromise);
+  while (previewBytesCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
+    const oldestKey = previewBytesCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    previewBytesCache.delete(oldestKey);
+  }
+
+  return previewPromise;
+}
+
 export async function createDocPDFPreviewUrl(doc: CLCDocument) {
-  const clcFile = requireDesktopPdfSupport();
-  const excelBuffer = await generateExcelBuffer(doc);
-  const result = await clcFile.createPdf(excelBuffer);
-  const blob = new Blob([result.bytes], { type: "application/pdf" });
+  const pdfBytes = await getCachedPreviewBytes(doc);
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
   return URL.createObjectURL(blob);
 }
 

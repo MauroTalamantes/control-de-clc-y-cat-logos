@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const { execFile } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -9,6 +10,9 @@ const { promisify } = require("node:util");
 const execFileAsync = promisify(execFile);
 const AUTO_UPDATE_CHECK_DELAY_MS = 15_000;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const MAX_PDF_CACHE_ENTRIES = 12;
+const pdfBufferCache = new Map();
+const pendingPdfConversions = new Map();
 
 // The app is form/report oriented and does not need GPU rendering. Some Windows
 // graphics drivers can leave Chromium's accelerated surface stale until the
@@ -204,9 +208,42 @@ finally {
 }
 
 async function createPdfBufferFromExcel(bytes) {
+  const excelBuffer = getFileBuffer(bytes);
+  const cacheKey = crypto.createHash("sha256").update(excelBuffer).digest("hex");
+  const cachedPdf = pdfBufferCache.get(cacheKey);
+  if (cachedPdf) {
+    pdfBufferCache.delete(cacheKey);
+    pdfBufferCache.set(cacheKey, cachedPdf);
+    return Buffer.from(cachedPdf);
+  }
+
+  const pendingConversion = pendingPdfConversions.get(cacheKey);
+  if (pendingConversion) {
+    return Buffer.from(await pendingConversion);
+  }
+
+  const conversionPromise = createUncachedPdfBufferFromExcel(excelBuffer)
+    .then(pdfBuffer => {
+      pdfBufferCache.set(cacheKey, pdfBuffer);
+      while (pdfBufferCache.size > MAX_PDF_CACHE_ENTRIES) {
+        const oldestKey = pdfBufferCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        pdfBufferCache.delete(oldestKey);
+      }
+      return pdfBuffer;
+    })
+    .finally(() => {
+      pendingPdfConversions.delete(cacheKey);
+    });
+
+  pendingPdfConversions.set(cacheKey, conversionPromise);
+  return Buffer.from(await conversionPromise);
+}
+
+async function createUncachedPdfBufferFromExcel(excelBuffer) {
   const paths = getTemporaryExportPaths();
   try {
-    await fs.promises.writeFile(paths.xlsxPath, getFileBuffer(bytes));
+    await fs.promises.writeFile(paths.xlsxPath, excelBuffer);
     await removeMarkOfTheWeb(paths.xlsxPath);
     await convertExcelFileToPdf(paths.xlsxPath, paths.pdfPath);
     return await fs.promises.readFile(paths.pdfPath);

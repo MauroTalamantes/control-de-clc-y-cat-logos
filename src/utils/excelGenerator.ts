@@ -27,6 +27,7 @@ const MULTIPAGE_CONCEPTS_PER_PAGE = 32;
 const PRINTABLE_HEIGHT_AT_WIDTH_FIT = 680;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
+const GENERATED_XLSX_MTIME = new Date(Date.UTC(2026, 0, 1));
 
 let templateBufferPromise: Promise<ArrayBuffer> | null = null;
 
@@ -823,7 +824,7 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   zip[sheetPath] = strToU8(serializeXml(sheetDoc));
   removeCalcChain(zip);
 
-  return zipSync(zip, { level: 6 });
+  return zipSync(zip, { level: 6, mtime: GENERATED_XLSX_MTIME });
 }
 
 export function getDocExportBaseName(doc: CLCDocument) {

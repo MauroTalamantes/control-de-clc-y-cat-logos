@@ -265,7 +265,7 @@ const handleDownloadSelectedPDF = async () => {
   }, []);
 
   useEffect(() => {
-    if (!selectedDoc || previewMode !== "formato") {
+    if (!selectedDoc) {
       setOfficialPreviewStatus("idle");
       setOfficialPreviewError(null);
       setOfficialPreviewUrl(null);
@@ -307,7 +307,7 @@ const handleDownloadSelectedPDF = async () => {
     return () => {
       isActive = false;
     };
-  }, [selectedDocPreviewKey, previewMode]);
+  }, [selectedDocPreviewKey]);
 
   return (
     <div className="space-y-6" id="clc-lists-viewer">
