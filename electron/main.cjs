@@ -4,7 +4,6 @@ const { spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { pathToFileURL } = require("node:url");
 
 const AUTO_UPDATE_CHECK_DELAY_MS = 15_000;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -346,6 +345,38 @@ function shutdownExcelPdfWorker(workerState = excelPdfWorkerState) {
   }, 5_000);
 }
 
+async function printPdfWithDefaultApplication(pdfPath) {
+  await new Promise((resolve, reject) => {
+    const printProcess = spawn(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Start-Process -FilePath $env:CLC_PDF_PRINT_PATH -Verb Print -WindowStyle Hidden"
+      ],
+      {
+        windowsHide: true,
+        env: { ...process.env, CLC_PDF_PRINT_PATH: pdfPath },
+        stdio: ["ignore", "ignore", "pipe"]
+      }
+    );
+
+    let stderr = "";
+    printProcess.stderr.setEncoding("utf8");
+    printProcess.stderr.on("data", chunk => {
+      stderr += chunk;
+    });
+    printProcess.on("error", reject);
+    printProcess.on("exit", code => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || "No se pudo enviar el PDF a la impresora."));
+    });
+  });
+}
+
 function cachePdfBuffer(cacheKey, pdfBuffer) {
   const previous = pdfBufferCache.get(cacheKey);
   if (previous) {
@@ -679,37 +710,19 @@ app.whenReady().then(() => {
     return { canceled: false, filePath };
   });
 
-  ipcMain.handle("clc-file:print-pdf", async (event, payload) => {
+  ipcMain.handle("clc-file:print-pdf", async (_event, payload) => {
     const pdfBuffer = await createPdfBufferFromExcel(payload?.bytes);
     const paths = getTemporaryExportPaths();
     await fs.promises.writeFile(paths.pdfPath, pdfBuffer);
 
-    const parentWindow = BrowserWindow.fromWebContents(event.sender);
-    const printWindow = new BrowserWindow({
-      show: false,
-      parent: parentWindow || undefined,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        plugins: true
-      }
-    });
-
     try {
-      await printWindow.loadURL(pathToFileURL(paths.pdfPath).toString());
-      await new Promise((resolve, reject) => {
-        printWindow.webContents.print(
-          { silent: false, printBackground: true },
-          (success, failureReason) => {
-            if (success) resolve();
-            else reject(new Error(failureReason || "No se pudo imprimir el PDF."));
-          }
-        );
-      });
+      await printPdfWithDefaultApplication(paths.pdfPath);
       return { printed: true };
     } finally {
-      if (!printWindow.isDestroyed()) printWindow.close();
-      await removeTemporaryExport(paths);
+      const cleanupTimer = setTimeout(() => {
+        void removeTemporaryExport(paths);
+      }, 10 * 60_000);
+      if (typeof cleanupTimer.unref === "function") cleanupTimer.unref();
     }
   });
 
