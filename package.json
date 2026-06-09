@@ -1,7 +1,7 @@
 {
   "name": "control-de-clc-y-catalogos",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Aplicacion de escritorio para control de CLC y catalogos.",
   "author": "Ayuntamiento de Guadalupe",
   "type": "module",
