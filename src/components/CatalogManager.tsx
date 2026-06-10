@@ -269,7 +269,14 @@ export default function CatalogManager({
   // BANCOS
   const startAddBanco = () => {
     setEditingId("new_banco");
-    setBancoForm({ nombre: bancoNombres[0]?.nombre || "", cuenta: "", clabe: "" });
+    setBancoForm({
+      nombre: bancoNombres[0]?.nombre || "",
+      cuenta: "",
+      clabe: "",
+      providerId: "",
+      isDefault: false,
+      active: true
+    });
   };
   const startEditBanco = (b: Bank) => {
     setEditingId(b.id);
@@ -277,6 +284,10 @@ export default function CatalogManager({
   };
   const saveBanco = () => {
     if (!bancoForm.nombre || !bancoForm.cuenta || !bancoForm.clabe) return;
+    if (!bancoForm.providerId) {
+      alert("Selecciona el proveedor propietario de la cuenta bancaria.");
+      return;
+    }
     let list = [...catalogs.bancos];
     
     // Check duplicate CLABE
@@ -288,22 +299,50 @@ export default function CatalogManager({
       }
     }
 
+    const nextBank: Bank = {
+      id: editingId === "new_banco" ? "b_" + Math.random().toString(36).substr(2, 9) : String(editingId),
+      nombre: bancoForm.nombre,
+      cuenta: bancoForm.cuenta,
+      clabe: bancoForm.clabe || "",
+      providerId: bancoForm.providerId,
+      isDefault: Boolean(bancoForm.isDefault),
+      active: bancoForm.active !== false
+    };
+
+    if (nextBank.isDefault) {
+      list = list.map(bank => bank.providerId === nextBank.providerId ? { ...bank, isDefault: false } : bank);
+    }
+
     if (editingId === "new_banco") {
-      list.push({
-        id: "b_" + Math.random().toString(36).substr(2, 9),
-        nombre: bancoForm.nombre,
-        cuenta: bancoForm.cuenta,
-        clabe: bancoForm.clabe || ""
-      });
+      list.push(nextBank);
     } else {
-      list = list.map(b => b.id === editingId ? { ...b, ...bancoForm } as Bank : b);
+      list = list.map(b => b.id === editingId ? nextBank : b);
+    }
+
+    if (!list.some(bank => bank.providerId === nextBank.providerId && bank.isDefault && bank.active !== false)) {
+      list = list.map(bank => bank.id === nextBank.id ? { ...bank, isDefault: true } : bank);
+    }
+    for (const provider of catalogs.proveedores) {
+      const activeAccounts = list.filter(bank => bank.providerId === provider.id && bank.active !== false);
+      if (activeAccounts.length && !activeAccounts.some(bank => bank.isDefault)) {
+        const firstAccountId = activeAccounts[0].id;
+        list = list.map(bank => bank.id === firstAccountId ? { ...bank, isDefault: true } : bank);
+      }
     }
     onChange({ ...catalogs, bancos: list });
     setEditingId(null);
   };
   const deleteBanco = (id: string) => {
     if (confirm("¿Deseas eliminar este Banco?")) {
-      onChange({ ...catalogs, bancos: catalogs.bancos.filter(b => b.id !== id) });
+      const deletedBank = catalogs.bancos.find(bank => bank.id === id);
+      let bancos = catalogs.bancos.filter(bank => bank.id !== id);
+      if (deletedBank?.isDefault && deletedBank.providerId) {
+        const replacement = bancos.find(bank => bank.providerId === deletedBank.providerId && bank.active !== false);
+        if (replacement) {
+          bancos = bancos.map(bank => bank.id === replacement.id ? { ...bank, isDefault: true } : bank);
+        }
+      }
+      onChange({ ...catalogs, bancos });
     }
   };
 
@@ -332,7 +371,8 @@ export default function CatalogManager({
       list.push({
         id: "p_" + Math.random().toString(36).substr(2, 9),
         nombre: proveedorForm.nombre,
-        rfc: pRfc
+        rfc: pRfc,
+        active: true
       });
     } else {
       list = list.map(p => p.id === editingId ? { ...p, ...proveedorForm, rfc: pRfc } as Provider : p);
@@ -342,6 +382,10 @@ export default function CatalogManager({
   };
   const deleteProveedor = (id: string) => {
     if (confirm("¿Deseas eliminar este Proveedor?")) {
+      if (catalogs.bancos.some(bank => bank.providerId === id)) {
+        alert("No se puede eliminar: el proveedor tiene cuentas bancarias vinculadas.");
+        return;
+      }
       onChange({ ...catalogs, proveedores: catalogs.proveedores.filter(p => p.id !== id) });
     }
   };
@@ -758,7 +802,7 @@ export default function CatalogManager({
             {false && editingId === "new_banco" && (
               <div id="banco-form-card" className="bg-blue-50/30 border border-blue-100 rounded-xl p-4 space-y-3">
                 <h3 className="text-xs font-semibold text-blue-800">Agregar Información Bancaria</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                   <div>
                     <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Banco <RequiredMark /></label>
                     <select
@@ -791,6 +835,28 @@ export default function CatalogManager({
                       className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                     />
                   </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Proveedor propietario <RequiredMark /></label>
+                    <select
+                      value={bancoForm.providerId || ""}
+                      onChange={e => setBancoForm({ ...bancoForm, providerId: e.target.value })}
+                      className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+                    >
+                      <option value="">Selecciona proveedor...</option>
+                      {catalogs.proveedores.filter(provider => provider.active !== false).map(provider => (
+                        <option key={provider.id} value={provider.id}>{provider.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <label className="flex items-end gap-2 pb-2 text-[11px] font-medium text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(bancoForm.isDefault)}
+                      onChange={e => setBancoForm({ ...bancoForm, isDefault: e.target.checked })}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                    />
+                    Cuenta default
+                  </label>
                 </div>
                 <div className="flex justify-end gap-2 mt-2">
                   <button onClick={() => setEditingId(null)} className="px-3 py-1.5 border border-gray-200 text-gray-500 text-xs rounded-lg hover:bg-gray-50 cursor-pointer">
@@ -810,6 +876,8 @@ export default function CatalogManager({
                     <th className="p-3">Banco</th>
                     <th className="p-3">N° Cuenta</th>
                     <th className="p-3">Clabe</th>
+                    <th className="p-3">Proveedor</th>
+                    <th className="p-3 text-center">Default</th>
                     <th className="p-3 text-right w-24">Acciones</th>
                   </tr>
                 </thead>
@@ -845,6 +913,26 @@ export default function CatalogManager({
                               className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1"
                             />
                           </td>
+                          <td className="p-2">
+                            <select
+                              value={bancoForm.providerId || ""}
+                              onChange={e => setBancoForm({ ...bancoForm, providerId: e.target.value })}
+                              className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white"
+                            >
+                              <option value="">Selecciona proveedor...</option>
+                              {catalogs.proveedores.filter(provider => provider.active !== false).map(provider => (
+                                <option key={provider.id} value={provider.id}>{provider.nombre}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="p-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(bancoForm.isDefault)}
+                              onChange={e => setBancoForm({ ...bancoForm, isDefault: e.target.checked })}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                            />
+                          </td>
                           <td className="p-2 text-right">
                             <div className="flex justify-end gap-1">
                               <button onClick={saveBanco} className="p-1 bg-emerald-50 text-emerald-600 rounded-md hover:bg-emerald-100 cursor-pointer"><Check className="h-4 w-4" /></button>
@@ -857,6 +945,10 @@ export default function CatalogManager({
                           <td className="p-3 font-semibold text-gray-800">{b.nombre}</td>
                           <td className="p-3 font-mono font-medium text-gray-600">{b.cuenta}</td>
                           <td className="p-3 font-mono text-gray-500">{b.clabe || "-"}</td>
+                          <td className="p-3 font-medium text-gray-600">
+                            {catalogs.proveedores.find(provider => provider.id === b.providerId)?.nombre || "Sin vincular"}
+                          </td>
+                          <td className="p-3 text-center font-bold text-blue-700">{b.isDefault ? "Sí" : "-"}</td>
                           <td className="p-3 text-right">
                             <div className="flex justify-end gap-1">
                               <button onClick={() => startEditBanco(b)} className="p-1 text-gray-400 hover:text-blue-600 rounded-md hover:bg-blue-50 cursor-pointer" title="Editar"><Edit2 className="h-3.5 w-3.5" /></button>
@@ -1553,7 +1645,7 @@ export default function CatalogManager({
               )}
 
               {editingId === "new_banco" && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                   <div>
                     <label className="block text-[11px] font-medium text-gray-500 mb-1">Nombre Banco <RequiredMark /></label>
                     <select
@@ -1586,6 +1678,28 @@ export default function CatalogManager({
                       className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
                     />
                   </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[11px] font-medium text-gray-500 mb-1">Proveedor propietario <RequiredMark /></label>
+                    <select
+                      value={bancoForm.providerId || ""}
+                      onChange={e => setBancoForm({ ...bancoForm, providerId: e.target.value })}
+                      className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:ring-1 focus:ring-blue-500 focus:outline-hidden"
+                    >
+                      <option value="">Selecciona proveedor...</option>
+                      {catalogs.proveedores.filter(provider => provider.active !== false).map(provider => (
+                        <option key={provider.id} value={provider.id}>{provider.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <label className="flex items-end gap-2 pb-2 text-[11px] font-medium text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(bancoForm.isDefault)}
+                      onChange={e => setBancoForm({ ...bancoForm, isDefault: e.target.checked })}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                    />
+                    Cuenta default
+                  </label>
                 </div>
               )}
 

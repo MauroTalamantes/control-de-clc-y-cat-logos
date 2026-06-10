@@ -9,10 +9,12 @@ import {
   saveStoredCatalogs,
   saveStoredDocuments,
   saveStoredFolioCounters,
-  setStoredNextFolioNumber
+  setStoredNextFolioNumber,
+  normalizeCatalogs
 } from "./initialData";
 import {
   deleteSupabaseDocument,
+  checkSupabaseInvoiceUsage,
   finalizeSupabaseDocument,
   EMPTY_DOCUMENT_METRICS,
   isSupabaseConfigured,
@@ -21,6 +23,7 @@ import {
   loadSupabaseAppMeta,
   saveSupabaseCatalogs,
   saveSupabaseDocument,
+  retireSupabaseInvoiceUsage,
   setSupabaseNextFolioNumber,
   type AppMetaSnapshot,
   type DocumentListParams,
@@ -28,10 +31,13 @@ import {
   type DocumentListSortKey,
   type SupabaseDeleteMutationResult,
   type SupabaseDocumentMutationResult,
-  type SupabaseFinalizeMutationResult
+  type SupabaseFinalizeMutationResult,
+  type InvoiceUsage
 } from "./supabaseStore";
+import { assertProviderBankRelationship, inferProviderBankLinks } from "./providerBank";
 
 export type { DocumentListParams, DocumentListResult, DocumentListSortKey } from "./supabaseStore";
+export type { InvoiceUsage } from "./supabaseStore";
 
 export interface AppDataSnapshot {
   catalogs: AppCatalogs;
@@ -42,6 +48,10 @@ export interface AppDataSnapshot {
 }
 
 const isElectronStoreAvailable = () => Boolean(window.clcStore);
+
+function prepareLocalCatalogs(catalogs: AppCatalogs | null | undefined, documents: CLCDocument[]) {
+  return inferProviderBankLinks(normalizeCatalogs(catalogs), documents);
+}
 
 function getDocumentYear(document: CLCDocument) {
   const year = (document as unknown as Record<string, unknown>)["a\u00f1o"];
@@ -189,18 +199,20 @@ export async function loadAppData(): Promise<AppDataSnapshot> {
 
   if (isElectronStoreAvailable() && window.clcStore) {
     const store = await window.clcStore.get();
+    const documents = store.documents.length ? store.documents : INITIAL_DOCUMENTS;
     return {
-      catalogs: store.catalogs || INITIAL_CATALOGS,
-      documents: store.documents.length ? store.documents : INITIAL_DOCUMENTS,
+      catalogs: prepareLocalCatalogs(store.catalogs, documents),
+      documents,
       folioCounters: store.folioCounters || [],
       dataFilePath: store.dataFilePath,
       storageMode: "electron"
     };
   }
 
+  const documents = getStoredDocuments();
   return {
-    catalogs: getStoredCatalogs(),
-    documents: getStoredDocuments(),
+    catalogs: prepareLocalCatalogs(getStoredCatalogs(), documents),
+    documents,
     folioCounters: getStoredFolioCounters(),
     storageMode: "browser"
   };
@@ -215,7 +227,7 @@ export async function loadAppMetaData(): Promise<AppMetaSnapshot> {
     const store = await window.clcStore.get();
     const documents = store.documents.length ? store.documents : INITIAL_DOCUMENTS;
     return buildLocalMetaSnapshot(
-      store.catalogs || INITIAL_CATALOGS,
+      prepareLocalCatalogs(store.catalogs, documents),
       documents,
       store.folioCounters || [],
       "electron",
@@ -224,7 +236,12 @@ export async function loadAppMetaData(): Promise<AppMetaSnapshot> {
   }
 
   const documents = getStoredDocuments();
-  return buildLocalMetaSnapshot(getStoredCatalogs(), documents, getStoredFolioCounters(), "browser");
+  return buildLocalMetaSnapshot(
+    prepareLocalCatalogs(getStoredCatalogs(), documents),
+    documents,
+    getStoredFolioCounters(),
+    "browser"
+  );
 }
 
 export async function listDocuments(params: DocumentListParams): Promise<DocumentListResult> {
@@ -270,6 +287,7 @@ export async function persistDocument(
     return saveSupabaseDocument(document);
   }
 
+  await assertLocalProviderBankRelationship(document);
   await persistDocuments(optimisticDocuments);
   return optimisticDocuments;
 }
@@ -294,6 +312,7 @@ export async function finalizeAndPersistDocument(
     return finalizeSupabaseDocument(doc);
   }
 
+  await assertLocalProviderBankRelationship(doc);
   if (isElectronStoreAvailable() && window.clcStore) {
     return window.clcStore.finalizeDocument(doc);
   }
@@ -343,4 +362,81 @@ export async function setNextFolioNumber(anio: number, nextNumber: number): Prom
     setStoredNextFolioNumber(anio, nextNumber),
     "browser"
   );
+}
+
+const normalizeInvoiceUuid = (value: string) => value.trim().toLowerCase();
+
+async function assertLocalProviderBankRelationship(document: CLCDocument) {
+  if (isElectronStoreAvailable() && window.clcStore) {
+    const store = await window.clcStore.get();
+    assertProviderBankRelationship(document, prepareLocalCatalogs(store.catalogs, store.documents));
+    return;
+  }
+  const documents = getStoredDocuments();
+  assertProviderBankRelationship(document, prepareLocalCatalogs(getStoredCatalogs(), documents));
+}
+
+async function getLocalDocumentsForInvoiceValidation() {
+  if (isElectronStoreAvailable() && window.clcStore) {
+    return (await window.clcStore.get()).documents;
+  }
+  return getStoredDocuments();
+}
+
+export async function checkInvoiceUsage(
+  uuid: string,
+  currentDocumentId?: string,
+  currentItemId?: string
+): Promise<InvoiceUsage | null> {
+  const normalizedUuid = normalizeInvoiceUuid(uuid);
+  if (!normalizedUuid) return null;
+
+  if (isSupabaseConfigured()) {
+    return checkSupabaseInvoiceUsage(normalizedUuid, currentDocumentId, currentItemId);
+  }
+
+  const documents = await getLocalDocumentsForInvoiceValidation();
+  for (const document of documents) {
+    for (const item of document.items) {
+      if (normalizeInvoiceUuid(item.numFactura) !== normalizedUuid) continue;
+      if (document.id === currentDocumentId && item.id === currentItemId) continue;
+      return {
+        uuid: normalizedUuid,
+        clcId: document.id,
+        folio: document.folio || "BORRADOR",
+        partidaId: item.id
+      };
+    }
+  }
+  return null;
+}
+
+export async function retireInvoiceUsage(
+  uuid: string,
+  documentId: string,
+  itemId: string,
+  reason: string
+) {
+  if (!reason.trim()) {
+    throw new Error("El motivo para retirar la factura es obligatorio.");
+  }
+
+  if (isSupabaseConfigured()) {
+    return retireSupabaseInvoiceUsage(uuid, documentId, itemId, reason.trim());
+  }
+
+  const documents = await getLocalDocumentsForInvoiceValidation();
+  const document = documents.find(candidate => candidate.id === documentId);
+  if (!document) throw new Error("No se encontró la CLC donde está registrada la factura.");
+  if (document.estado === "finalizado") {
+    throw new Error("No se puede retirar una factura de una CLC finalizada.");
+  }
+
+  const updatedDocuments = documents.map(candidate => (
+    candidate.id === documentId
+      ? { ...candidate, items: candidate.items.filter(item => item.id !== itemId) }
+      : candidate
+  ));
+  await persistDocuments(updatedDocuments);
+  return { removed: true };
 }

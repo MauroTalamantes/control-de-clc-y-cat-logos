@@ -45,36 +45,48 @@ export const INITIAL_CATALOGS: AppCatalogs = {
       id: "b1",
       nombre: "SANTANDER",
       cuenta: "65509270940",
-      clabe: "01493065509270940"
+      clabe: "01493065509270940",
+      providerId: "p1",
+      isDefault: true,
+      active: true
     },
     {
       id: "b2",
       nombre: "BBVA BANCOMER",
       cuenta: "01234567890",
-      clabe: "012180001234567890"
+      clabe: "012180001234567890",
+      providerId: "p2",
+      isDefault: true,
+      active: true
     },
     {
       id: "b3",
       nombre: "BANORTE",
       cuenta: "98765432101",
-      clabe: "072180009876543210"
+      clabe: "072180009876543210",
+      providerId: "p3",
+      isDefault: true,
+      active: true
     }
   ],
   proveedores: [
     {
       id: "p1",
       nombre: "MULTISERVICIO LA PLATA S.A. DE C.V.",
-      rfc: "MPL020607CX5"
+      rfc: "MPL020607CX5",
+      active: true
     },
     {
       id: "p2",
       nombre: "ABASTECEDORA DE INSUMOS DE GUADALUPE S.A. DE C.V.",
-      rfc: "AIG150912TS8"
+      rfc: "AIG150912TS8",
+      active: true
     },
     {
       id: "p3",
       nombre: "CONSTRUCTORA EL PROGRESO S.A. DE C.V.",
-      rfc: "CPR110418LL9"
+      rfc: "CPR110418LL9",
+      active: true
     }
   ],
   fuentes: [
@@ -221,13 +233,24 @@ export const INITIAL_DOCUMENTS: CLCDocument[] = [
 
 export function normalizeCatalogs(catalogs: Partial<AppCatalogs> | null | undefined): AppCatalogs {
   const parsed = catalogs || {};
+  const bancos = (parsed.bancos || INITIAL_CATALOGS.bancos).map(bank => ({
+    ...bank,
+    isDefault: Boolean(bank.isDefault),
+    active: bank.active !== false
+  }));
+  const proveedores = (parsed.proveedores || INITIAL_CATALOGS.proveedores).map(provider => ({
+    ...provider,
+    active: provider.active !== false
+  }));
   return {
     ...INITIAL_CATALOGS,
     ...parsed,
+    bancos,
+    proveedores,
     defaultUnidadId: parsed.defaultUnidadId || parsed.unidades?.[0]?.id || INITIAL_CATALOGS.defaultUnidadId,
     bancoNombres: parsed.bancoNombres?.length
       ? parsed.bancoNombres
-      : Array.from(new Set((parsed.bancos || INITIAL_CATALOGS.bancos).map(b => b.nombre))).map((nombre, index) => ({
+      : Array.from(new Set(bancos.map(b => b.nombre))).map((nombre, index) => ({
           id: `bn_${index + 1}`,
           nombre
         }))

@@ -4,15 +4,23 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { 
-  AppCatalogs, 
-  CLCDocument, 
-  CLCItem, 
-  AdministrativeUnit, 
-  Bank, 
-  Provider 
-} from "../types";
-import { Plus, Trash, Check, AlertTriangle, Calculator, FileText, ChevronRight, ChevronDown } from "lucide-react";
+import { AppCatalogs, CLCDocument, CLCItem, AdministrativeUnit, Bank, Provider } from "../types";
+import { Plus, Trash, Check, AlertTriangle, Calculator, FileText, ChevronRight, ChevronDown, Upload, ArchiveX } from "lucide-react";
+import {
+  calculateXmlHash,
+  normalizeRfc,
+  normalizeUuid,
+  parseCfdiXml,
+  validateCfdiAgainstProvider,
+  type ParsedCfdi
+} from "../utils/cfdiParser";
+import { checkInvoiceUsage, retireInvoiceUsage, type InvoiceUsage } from "../utils/appStore";
+import {
+  getActiveProviderByRfc,
+  getPreferredProviderAccount,
+  getProviderAccounts,
+  isCatalogRecordActive
+} from "../utils/providerBank";
 
 interface CLCFormProps {
   catalogs: AppCatalogs;
@@ -58,6 +66,23 @@ interface BudgetRecordDraft {
   clave: string;
   description: string;
 }
+interface XmlImportStatus {
+  type: "success" | "error";
+  message: string;
+}
+interface XmlBatchResult {
+  fileName: string;
+  success: boolean;
+  message: string;
+}
+interface RetireInvoiceDraft {
+  itemId: string;
+  uuid: string;
+}
+interface AssociationNotice {
+  type: "success" | "warning";
+  message: string;
+}
 
 const RequiredMark = () => <span className="text-red-600 font-black" aria-hidden="true">*</span>;
 
@@ -93,6 +118,12 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const [openBudgetPicker, setOpenBudgetPicker] = useState<string | null>(null);
   const [budgetRecordDraft, setBudgetRecordDraft] = useState<BudgetRecordDraft | null>(null);
   const [currencyDrafts, setCurrencyDrafts] = useState<Record<string, string>>({});
+  const [xmlImportStatuses, setXmlImportStatuses] = useState<Record<string, XmlImportStatus>>({});
+  const [xmlBatchResults, setXmlBatchResults] = useState<XmlBatchResult[]>([]);
+  const [retireInvoiceDraft, setRetireInvoiceDraft] = useState<RetireInvoiceDraft | null>(null);
+  const [retireReason, setRetireReason] = useState("");
+  const [isRetiringInvoice, setIsRetiringInvoice] = useState(false);
+  const [associationNotice, setAssociationNotice] = useState<AssociationNotice | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const initializedNewFormRef = useRef(false);
   const bancoNombres = catalogs.bancoNombres?.length
@@ -102,6 +133,24 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         nombre
       }));
   const isEditingFinalized = documentToEdit?.estado === "finalizado";
+  const selectedCatalogBank = catalogs.bancos.find(bank => bank.id === selectedBancoId);
+  const hasUnlinkedSelectedBank = Boolean(selectedCatalogBank && !selectedCatalogBank.providerId);
+  const availableBankAccounts = catalogs.bancos.filter(bank => (
+    isCatalogRecordActive(bank) &&
+    (
+      !selectedProveedorId ||
+      selectedProveedorId === "custom" ||
+      bank.providerId === selectedProveedorId ||
+      (bank.id === selectedBancoId && !bank.providerId)
+    )
+  ));
+  const availableProviders = catalogs.proveedores.filter(provider => (
+    isCatalogRecordActive(provider) &&
+    (
+      !hasUnlinkedSelectedBank ||
+      getProviderAccounts(catalogs, provider.id).length === 0
+    )
+  ));
 
   useEffect(() => {
     if (!openBudgetPicker && !isBancoPickerOpen) return;
@@ -147,8 +196,6 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
   const createCatalogId = (prefix: string) => `${prefix}_${Math.random().toString(36).substr(2, 9)}`;
 
-  const getDefaultBanco = () => catalogs.bancos[0] || null;
-
   const restoreBankDraft = (draft: SavedCLCFormDraft) => {
     if (draft.selectedBancoId === "custom") {
       const matchedBankName = bancoNombres.find(
@@ -162,7 +209,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       return;
     }
 
-    const selectedBank = catalogs.bancos.find(b => b.id === draft.selectedBancoId) || getDefaultBanco();
+    const selectedBank = catalogs.bancos.find(b => b.id === draft.selectedBancoId);
     setSelectedBancoId(selectedBank?.id || "");
     setSelectedBancoNombreId("");
     setCustomBancoNombre("");
@@ -187,6 +234,33 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const withManualCatalogRecords = (bancoNombre: string, proveedorNombre: string): AppCatalogs | null => {
     let nextCatalogs = catalogs;
     let changed = false;
+    let providerId = selectedProveedorId !== "custom" ? selectedProveedorId : "";
+
+    if (selectedProveedorId === "custom") {
+      const normalizedProviderName = normalizeCatalogText(proveedorNombre);
+      const normalizedRfc = normalizeCatalogText(proveedorRfc);
+      const existingProvider = nextCatalogs.proveedores.find(p => (
+        normalizeCatalogText(p.rfc) === normalizedRfc ||
+        normalizeCatalogText(p.nombre) === normalizedProviderName
+      ));
+
+      if (existingProvider) {
+        providerId = existingProvider.id;
+      } else {
+        providerId = createCatalogId("p");
+        const newProvider: Provider = {
+          id: providerId,
+          nombre: normalizedProviderName,
+          rfc: normalizedRfc,
+          active: true
+        };
+        nextCatalogs = {
+          ...nextCatalogs,
+          proveedores: [...nextCatalogs.proveedores, newProvider]
+        };
+        changed = true;
+      }
+    }
 
     if (selectedBancoId === "custom") {
       const normalizedBankName = normalizeCatalogText(bancoNombre);
@@ -194,51 +268,61 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       const normalizedClabe = bancoClabe.trim();
       const bancoNombres = nextCatalogs.bancoNombres || [];
       const bankNameExists = bancoNombres.some(b => normalizeCatalogText(b.nombre) === normalizedBankName);
-      const bankAccountExists = nextCatalogs.bancos.some(b => {
+      const existingBank = nextCatalogs.bancos.find(b => {
         const sameClabe = normalizedClabe && b.clabe.trim() === normalizedClabe;
         const sameAccount = normalizeCatalogText(b.nombre) === normalizedBankName && b.cuenta.trim() === normalizedCuenta;
         return sameClabe || sameAccount;
       });
 
-      if (!bankNameExists || !bankAccountExists) {
+      if (!bankNameExists || !existingBank || !existingBank.providerId) {
+        const providerHasDefault = nextCatalogs.bancos.some(bank => (
+          bank.providerId === providerId && bank.isDefault && isCatalogRecordActive(bank)
+        ));
         nextCatalogs = {
           ...nextCatalogs,
           bancoNombres: bankNameExists
             ? bancoNombres
             : [...bancoNombres, { id: createCatalogId("bn"), nombre: normalizedBankName }],
-          bancos: bankAccountExists
-            ? nextCatalogs.bancos
+          bancos: existingBank
+            ? nextCatalogs.bancos.map(bank => bank.id === existingBank.id
+              ? {
+                  ...bank,
+                  providerId,
+                  isDefault: bank.isDefault || !providerHasDefault,
+                  active: true
+                }
+              : bank)
             : [
                 ...nextCatalogs.bancos,
                 {
                   id: createCatalogId("b"),
                   nombre: normalizedBankName,
                   cuenta: normalizedCuenta,
-                  clabe: normalizedClabe
+                  clabe: normalizedClabe,
+                  providerId,
+                  isDefault: !providerHasDefault,
+                  active: true
                 }
               ]
         };
         changed = true;
       }
-    }
-
-    if (selectedProveedorId === "custom") {
-      const normalizedProviderName = normalizeCatalogText(proveedorNombre);
-      const normalizedRfc = normalizeCatalogText(proveedorRfc);
-      const providerExists = nextCatalogs.proveedores.some(p => (
-        normalizeCatalogText(p.rfc) === normalizedRfc ||
-        normalizeCatalogText(p.nombre) === normalizedProviderName
-      ));
-
-      if (!providerExists) {
-        const newProvider: Provider = {
-          id: createCatalogId("p"),
-          nombre: normalizedProviderName,
-          rfc: normalizedRfc
-        };
+    } else {
+      const existingBank = nextCatalogs.bancos.find(bank => bank.id === selectedBancoId);
+      if (existingBank && !existingBank.providerId && providerId) {
+        const providerHasDefault = nextCatalogs.bancos.some(bank => (
+          bank.providerId === providerId && bank.isDefault && isCatalogRecordActive(bank)
+        ));
         nextCatalogs = {
           ...nextCatalogs,
-          proveedores: [...nextCatalogs.proveedores, newProvider]
+          bancos: nextCatalogs.bancos.map(bank => bank.id === existingBank.id
+            ? {
+                ...bank,
+                providerId,
+                isDefault: bank.isDefault || !providerHasDefault,
+                active: true
+              }
+            : bank)
         };
         changed = true;
       }
@@ -417,6 +501,51 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     setSelectedUnidadId(id);
   };
 
+  const clearBankSelection = () => {
+    setSelectedBancoId("");
+    setSelectedBancoNombreId("");
+    setCustomBancoNombre("");
+    setBancoCuenta("");
+    setBancoClabe("");
+  };
+
+  const selectCatalogBank = (bank: Bank) => {
+    setSelectedBancoId(bank.id);
+    setSelectedBancoNombreId("");
+    setCustomBancoNombre("");
+    setBancoCuenta(bank.cuenta);
+    setBancoClabe(bank.clabe);
+  };
+
+  const selectProviderAndPreferredAccount = (provider: Provider) => {
+    setSelectedProveedorId(provider.id);
+    setCustomProveedorNombre("");
+    setProveedorRfc(provider.rfc);
+
+    const accounts = getProviderAccounts(catalogs, provider.id);
+    if (hasUnlinkedSelectedBank && accounts.length === 0) {
+      setAssociationNotice({
+        type: "success",
+        message: "Al guardar, la cuenta bancaria quedará vinculada al proveedor seleccionado."
+      });
+      return;
+    }
+
+    const preferredAccount = getPreferredProviderAccount(catalogs, provider.id);
+    if (preferredAccount) {
+      selectCatalogBank(preferredAccount);
+      setAssociationNotice(null);
+    } else {
+      clearBankSelection();
+      setAssociationNotice({
+        type: "warning",
+        message: accounts.length
+          ? "Selecciona la cuenta bancaria del proveedor."
+          : "El proveedor seleccionado no tiene cuenta bancaria registrada."
+      });
+    }
+  };
+
   const handleBancoChange = (id: string) => {
     setSelectedBancoId(id);
     setSelectedBancoNombreId("");
@@ -426,11 +555,39 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     if (!id || id === "custom") {
       setBancoCuenta("");
       setBancoClabe("");
+      if (id === "custom" && !selectedProveedorId) {
+        setSelectedProveedorId("");
+        setProveedorRfc("");
+        setCustomProveedorNombre("");
+        setAssociationNotice({
+          type: "warning",
+          message: "La cuenta bancaria seleccionada no está vinculada a ningún proveedor."
+        });
+      } else if (id === "custom") {
+        setAssociationNotice(null);
+      }
     } else {
       const b = catalogs.bancos.find(b => b.id === id);
       if (b) {
         setBancoCuenta(b.cuenta);
         setBancoClabe(b.clabe);
+        const provider = catalogs.proveedores.find(candidate => (
+          candidate.id === b.providerId && isCatalogRecordActive(candidate)
+        ));
+        if (provider) {
+          setSelectedProveedorId(provider.id);
+          setCustomProveedorNombre("");
+          setProveedorRfc(provider.rfc);
+          setAssociationNotice(null);
+        } else {
+          setSelectedProveedorId("");
+          setCustomProveedorNombre("");
+          setProveedorRfc("");
+          setAssociationNotice({
+            type: "warning",
+            message: "La cuenta bancaria seleccionada no está vinculada a ningún proveedor."
+          });
+        }
       }
     }
   };
@@ -438,12 +595,30 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const handleProveedorChange = (id: string) => {
     setSelectedProveedorId(id);
     setCustomProveedorNombre("");
-    if (id === "custom") {
+    if (!id) {
       setProveedorRfc("");
+      if (hasUnlinkedSelectedBank) {
+        setAssociationNotice({
+          type: "warning",
+          message: "La cuenta bancaria seleccionada no está vinculada a ningún proveedor."
+        });
+      } else {
+        clearBankSelection();
+        setAssociationNotice(null);
+      }
+    } else if (id === "custom") {
+      setProveedorRfc("");
+      if (selectedBancoId !== "custom" && !hasUnlinkedSelectedBank) clearBankSelection();
+      setAssociationNotice(hasUnlinkedSelectedBank
+        ? {
+            type: "success",
+            message: "Al guardar, la cuenta bancaria quedará vinculada al nuevo proveedor."
+          }
+        : null);
     } else {
       const p = catalogs.proveedores.find(p => p.id === id);
       if (p) {
-        setProveedorRfc(p.rfc);
+        selectProviderAndPreferredAccount(p);
       }
     }
   };
@@ -467,6 +642,20 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     };
   }
 
+  const isEmptyItem = (item: CLCItem) => (
+    !item.oc &&
+    !item.fuenteClave &&
+    !item.proyectoClave &&
+    !item.objetoClave &&
+    !item.numFactura &&
+    !item.fechaFactura &&
+    item.subTotal === 0 &&
+    item.descuento === 0 &&
+    item.iva === 0 &&
+    item.isr === 0 &&
+    item.importe === 0
+  );
+
   const addItemRow = () => {
     setItems([...items, createEmptyItem()]);
   };
@@ -474,6 +663,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const removeItemRow = (id: string) => {
     if (items.length <= 1) return;
     setItems(items.filter(it => it.id !== id));
+    setXmlImportStatuses(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
   };
 
   const updateItem = (itemId: string, field: keyof CLCItem, value: any) => {
@@ -493,7 +687,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         let iva = updated.iva;
         let isr = updated.isr;
 
-        if (field === "subTotal" || field === "descuento" || field === "iva" || field === "isr" || autoIva) {
+        if (field === "subTotal" || field === "descuento" || field === "iva" || field === "isr") {
           if (autoIva && (field === "subTotal" || field === "descuento")) {
             iva = Math.round((subT - desc) * 0.16 * 100) / 100;
             updated.iva = iva < 0 ? 0 : iva;
@@ -542,6 +736,206 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       delete next[draftKey];
       return next;
     });
+  };
+
+  const getInvoiceUsageMessage = (usage: InvoiceUsage) => {
+    return `Esta factura ya está registrada en la CLC ${usage.folio || usage.clcId}. Para reutilizarla primero debe retirarse de la CLC donde fue registrada.`;
+  };
+
+  const createItemFromCfdi = (cfdi: ParsedCfdi, xmlHash: string, baseItem?: CLCItem): CLCItem => ({
+    ...(baseItem || createEmptyItem()),
+    numFactura: cfdi.uuid.toUpperCase(),
+    fechaFactura: cfdi.fechaFactura,
+    subTotal: cfdi.subTotal,
+    descuento: cfdi.descuento,
+    iva: cfdi.iva,
+    isr: cfdi.isr,
+    importe: cfdi.total,
+    cfdi: {
+      uuid: cfdi.uuid,
+      version: cfdi.version,
+      serie: cfdi.serie,
+      folio: cfdi.folio,
+      rfcEmisor: cfdi.rfcEmisor,
+      nombreEmisor: cfdi.nombreEmisor,
+      rfcReceptor: cfdi.rfcReceptor,
+      concepto: cfdi.concepto,
+      moneda: cfdi.moneda,
+      formaPago: cfdi.formaPago,
+      metodoPago: cfdi.metodoPago,
+      xmlHash,
+    }
+  });
+
+  const resolveCfdiProvider = (cfdi: ParsedCfdi, expectedRfc: string) => {
+    if (normalizeRfc(expectedRfc)) {
+      validateCfdiAgainstProvider(cfdi, expectedRfc);
+      return { providerRfc: normalizeRfc(expectedRfc), detected: false };
+    }
+
+    const provider = getActiveProviderByRfc(catalogs, cfdi.rfcEmisor);
+    if (!provider) {
+      throw new Error("El RFC emisor del XML no existe en el catálogo de proveedores.");
+    }
+
+    selectProviderAndPreferredAccount(provider);
+    return { providerRfc: normalizeRfc(provider.rfc), detected: true };
+  };
+
+  const validateImportedCfdi = async (cfdi: ParsedCfdi, itemId?: string) => {
+    const providerMatch = resolveCfdiProvider(cfdi, proveedorRfc);
+
+    const duplicatedItem = items.find(item => (
+      item.id !== itemId &&
+      normalizeUuid(item.numFactura) === cfdi.uuid
+    ));
+    if (duplicatedItem) {
+      throw new Error("Esta factura ya está capturada en otra partida de la CLC actual.");
+    }
+
+    const usage = await checkInvoiceUsage(cfdi.uuid, documentToEdit?.id, itemId);
+    if (usage) throw new Error(getInvoiceUsageMessage(usage));
+    return providerMatch;
+  };
+
+  const handleCfdiFile = async (itemId: string, file: File) => {
+    try {
+      const xmlText = await file.text();
+      const cfdi = parseCfdiXml(xmlText);
+      const providerMatch = await validateImportedCfdi(cfdi, itemId);
+      const xmlHash = await calculateXmlHash(xmlText);
+
+      setItems(prevItems => prevItems.map(item => {
+        if (item.id !== itemId) return item;
+        return createItemFromCfdi(cfdi, xmlHash, item);
+      }));
+
+      if (!concepto.trim() && cfdi.concepto) {
+        setConcepto(cfdi.concepto.toUpperCase());
+      }
+
+      const reference = cfdi.referenciaFactura || cfdi.uuid || file.name;
+      setXmlImportStatuses(prev => ({
+        ...prev,
+        [itemId]: {
+          type: "success",
+          message: providerMatch.detected
+            ? `Proveedor detectado desde XML y autollenado correctamente. XML cargado: ${reference}`
+            : `XML cargado: ${reference}`,
+        },
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo leer el archivo XML seleccionado.";
+      setXmlImportStatuses(prev => ({
+        ...prev,
+        [itemId]: { type: "error", message },
+      }));
+    }
+  };
+
+  const handleCfdiFiles = async (files: FileList | File[]) => {
+    const selectedFiles = Array.from(files);
+    if (!selectedFiles.length) return;
+
+    const results: XmlBatchResult[] = [];
+    const loadedItems: CLCItem[] = [];
+    const batchUuids = new Set<string>();
+    const currentUuids = new Set(items.map(item => normalizeUuid(item.numFactura)).filter(Boolean));
+    let firstConcept = "";
+    let expectedProviderRfc = proveedorRfc;
+
+    for (const file of selectedFiles) {
+      try {
+        const xmlText = await file.text();
+        const cfdi = parseCfdiXml(xmlText);
+        const providerMatch = resolveCfdiProvider(cfdi, expectedProviderRfc);
+        expectedProviderRfc = providerMatch.providerRfc;
+
+        if (batchUuids.has(cfdi.uuid)) {
+          throw new Error("Este XML está duplicado dentro de los archivos seleccionados.");
+        }
+        batchUuids.add(cfdi.uuid);
+
+        if (currentUuids.has(cfdi.uuid)) {
+          throw new Error("Esta factura ya está capturada en una partida de la CLC actual.");
+        }
+
+        const usage = await checkInvoiceUsage(cfdi.uuid, documentToEdit?.id);
+        if (usage) throw new Error(getInvoiceUsageMessage(usage));
+
+        const xmlHash = await calculateXmlHash(xmlText);
+        loadedItems.push(createItemFromCfdi(cfdi, xmlHash));
+        currentUuids.add(cfdi.uuid);
+        firstConcept ||= cfdi.concepto;
+        results.push({
+          fileName: file.name,
+          success: true,
+          message: providerMatch.detected
+            ? `Proveedor detectado desde XML y autollenado correctamente. Cargado: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
+            : `Cargado: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
+        });
+      } catch (error) {
+        results.push({
+          fileName: file.name,
+          success: false,
+          message: error instanceof Error ? error.message : "El archivo seleccionado no parece ser un CFDI válido."
+        });
+      }
+    }
+
+    if (loadedItems.length) {
+      setItems(prevItems => {
+        const emptyItemIndex = prevItems.findIndex(isEmptyItem);
+        if (emptyItemIndex < 0) return [...prevItems, ...loadedItems];
+        return [
+          ...prevItems.slice(0, emptyItemIndex),
+          loadedItems[0],
+          ...prevItems.slice(emptyItemIndex + 1),
+          ...loadedItems.slice(1),
+        ];
+      });
+      if (!concepto.trim() && firstConcept) setConcepto(firstConcept.toUpperCase());
+    }
+    setXmlBatchResults(results);
+  };
+
+  const startRetireInvoice = (item: CLCItem) => {
+    if (!documentToEdit || documentToEdit.estado === "finalizado") {
+      alert("No se puede retirar una factura de una CLC finalizada.");
+      return;
+    }
+    if (!window.confirm("Esta acción retirará el UUID de esta CLC y permitirá usarlo en otra. ¿Deseas continuar?")) return;
+    setRetireInvoiceDraft({ itemId: item.id, uuid: item.numFactura });
+    setRetireReason("");
+  };
+
+  const confirmRetireInvoice = async () => {
+    if (!retireInvoiceDraft || !documentToEdit) return;
+    if (!retireReason.trim()) {
+      alert("El motivo para retirar la factura es obligatorio.");
+      return;
+    }
+
+    setIsRetiringInvoice(true);
+    try {
+      await retireInvoiceUsage(
+        retireInvoiceDraft.uuid,
+        documentToEdit.id,
+        retireInvoiceDraft.itemId,
+        retireReason
+      );
+      setItems(prevItems => {
+        const remainingItems = prevItems.filter(item => item.id !== retireInvoiceDraft.itemId);
+        return remainingItems.length ? remainingItems : [createEmptyItem()];
+      });
+      setRetireInvoiceDraft(null);
+      setRetireReason("");
+      alert("La factura fue retirada de esta CLC y su UUID quedó disponible.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "No se pudo retirar la factura.");
+    } finally {
+      setIsRetiringInvoice(false);
+    }
   };
 
   // Re-calculate all items on autoIva change
@@ -645,12 +1039,46 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       return;
     }
 
+    const selectedCatalogProvider = catalogs.proveedores.find(provider => provider.id === selectedProveedorId);
+    const selectedCatalogBankForSubmit = catalogs.bancos.find(bank => bank.id === selectedBancoId);
+    const manuallyMatchedProvider = selectedProveedorId === "custom"
+      ? getActiveProviderByRfc(catalogs, proveedorRfc)
+      : undefined;
+    const manuallyMatchedBank = selectedBancoId === "custom"
+      ? catalogs.bancos.find(bank => (
+          isCatalogRecordActive(bank) &&
+          (bank.clabe.trim() === bancoClabe.trim() || bank.cuenta.trim() === bancoCuenta.trim())
+        ))
+      : undefined;
+    if (
+      selectedCatalogProvider &&
+      normalizeRfc(selectedCatalogProvider.rfc) !== normalizeRfc(proveedorRfc)
+    ) {
+      alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
+      return;
+    }
+    if (
+      selectedCatalogBankForSubmit?.providerId &&
+      selectedCatalogBankForSubmit.providerId !== selectedProveedorId
+    ) {
+      alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
+      return;
+    }
+    if (
+      manuallyMatchedBank?.providerId &&
+      manuallyMatchedBank.providerId !== (selectedCatalogProvider?.id || manuallyMatchedProvider?.id)
+    ) {
+      alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
+      return;
+    }
+
     const validItems = items.filter(it => it.numFactura.trim() !== "" || it.subTotal > 0);
     if (validItems.length === 0) {
       alert("Error: Debe registrar al menos una Factura válida con número y subtotal.");
       return;
     }
 
+    const capturedUuids = new Set<string>();
     for (let i = 0; i < validItems.length; i++) {
       const item = validItems[i];
       if (!item.numFactura.trim()) {
@@ -679,6 +1107,29 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       }
       if (item.importe <= 0) {
         alert(`Error en Factura #${i + 1}: El importe final calculado de la factura debe ser mayor que cero.`);
+        return;
+      }
+
+      const normalizedItemUuid = normalizeUuid(item.numFactura);
+      if (capturedUuids.has(normalizedItemUuid)) {
+        alert(`Error: El UUID ${item.numFactura.toUpperCase()} está duplicado dentro de esta CLC.`);
+        return;
+      }
+      capturedUuids.add(normalizedItemUuid);
+
+      if (item.cfdi?.rfcEmisor && normalizeRfc(item.cfdi.rfcEmisor) !== normalizeRfc(proveedorRfc)) {
+        alert(`Error en Factura #${i + 1}: El RFC emisor del XML no coincide con el RFC del proveedor seleccionado.`);
+        return;
+      }
+
+      try {
+        const usage = await checkInvoiceUsage(item.numFactura, documentToEdit?.id, item.id);
+        if (usage) {
+          alert(getInvoiceUsageMessage(usage));
+          return;
+        }
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "No se pudo validar si la factura ya está registrada.");
         return;
       }
     }
@@ -740,11 +1191,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       if (updatedCatalogs) {
         await onCatalogsChange(updatedCatalogs);
       }
-      localStorage.removeItem(FORM_AUTOSAVE_KEY);
       await onSave(doc, finalize);
+      localStorage.removeItem(FORM_AUTOSAVE_KEY);
     } catch (error) {
       console.error("Error saving CLC with related catalogs", error);
-      alert("No se pudo guardar la CLC con el banco o proveedor en la base de datos.");
+      alert(error instanceof Error ? error.message : "No se pudo guardar la CLC con el banco o proveedor en la base de datos.");
     } finally {
       setIsSubmitting(false);
     }
@@ -1019,7 +1470,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                       className="w-full text-[11px] border border-slate-200 rounded-md px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                     />
                     <div className="mt-1.5 max-h-48 overflow-y-auto space-y-0.5">
-                      {catalogs.bancos
+                      {availableBankAccounts
                         .filter(b => matchesSearch(bancoSearch, b.cuenta, b.nombre, b.clabe))
                         .map(b => (
                           <button
@@ -1036,7 +1487,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                             <span className="block truncate text-[10px] text-slate-400">{b.nombre} - CLABE {b.clabe}</span>
                           </button>
                         ))}
-                      {catalogs.bancos.filter(b => matchesSearch(bancoSearch, b.cuenta, b.nombre, b.clabe)).length === 0 && (
+                      {availableBankAccounts.filter(b => matchesSearch(bancoSearch, b.cuenta, b.nombre, b.clabe)).length === 0 && (
                         <div className="text-[11px] text-slate-400 px-2 py-2 font-semibold">
                           Sin coincidencias
                         </div>
@@ -1114,6 +1565,16 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               </div>
             </div>
           </div>
+          {associationNotice && (
+            <p
+              role={associationNotice.type === "warning" ? "alert" : "status"}
+              className={`text-[11px] font-semibold ${
+                associationNotice.type === "warning" ? "text-amber-700" : "text-emerald-700"
+              }`}
+            >
+              {associationNotice.message}
+            </p>
+          )}
         </div>
 
         {/* STEP 2 COGNITIVE BLOCK */}
@@ -1137,10 +1598,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               className="w-full text-xs font-extrabold border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
               >
                 <option value="">Selecciona proveedor...</option>
-                {catalogs.proveedores.map(p => (
+                {availableProviders.map(p => (
                   <option key={p.id} value={p.id}>{p.nombre}</option>
                 ))}
-                <option value="custom" className="text-indigo-600 font-bold">-- REGISTRAR PROVEEDOR NO RECURRENT (Manual) --</option>
+                <option value="custom" className="text-indigo-600 font-bold">-- REGISTRAR OTRO PROVEEDOR --</option>
               </select>
               {selectedProveedorId === "custom" && (
                 <input
@@ -1181,18 +1642,64 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               </span>
             </div>
             
-            <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1 shrink-0">
-              <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-650">
+            <div className="flex items-center gap-2 shrink-0">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100">
+                <Upload className="h-3.5 w-3.5" />
+                Cargar varios XML
                 <input
-                  type="checkbox"
-                  checked={autoIva}
-                  onChange={e => setAutoIva(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  type="file"
+                  multiple
+                  accept=".xml,application/xml,text/xml"
+                  className="sr-only"
+                  onChange={event => {
+                    if (event.target.files) void handleCfdiFiles(event.target.files);
+                    event.currentTarget.value = "";
+                  }}
                 />
-                Auto-Calcular I.V.A (16%)
               </label>
+              <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+                <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-650">
+                  <input
+                    type="checkbox"
+                    checked={autoIva}
+                    onChange={e => setAutoIva(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  Auto-Calcular I.V.A (16%)
+                </label>
+              </div>
             </div>
           </div>
+
+          {xmlBatchResults.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-[11px] shadow-3xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-black uppercase tracking-wide text-slate-700">Resumen de carga masiva</p>
+                  {xmlBatchResults.some(result => !result.success) && (
+                    <p className="mt-0.5 font-semibold text-rose-700">Algunos XML no pudieron cargarse. Revisa el detalle de errores.</p>
+                  )}
+                </div>
+                <p className="font-bold text-slate-500">
+                  {xmlBatchResults.filter(result => result.success).length} cargados · {xmlBatchResults.filter(result => !result.success).length} rechazados
+                </p>
+              </div>
+              <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                {xmlBatchResults.map((result, index) => (
+                  <div
+                    key={`${result.fileName}-${index}`}
+                    className={`rounded-md border px-2 py-1.5 font-semibold ${
+                      result.success
+                        ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                        : "border-rose-100 bg-rose-50 text-rose-700"
+                    }`}
+                  >
+                    <span className="font-black">{result.fileName}:</span> {result.message}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* List of clean cards */}
           <div className="space-y-5">
@@ -1224,6 +1731,15 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                           className="bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 hover:border-transparent px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
                         >
                           <Trash className="h-3.5 w-3.5" /> Eliminar Partida
+                        </button>
+                      )}
+                      {documentToEdit?.estado === "borrador" && item.numFactura.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => startRetireInvoice(item)}
+                          className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100"
+                        >
+                          <ArchiveX className="h-3.5 w-3.5" /> Retirar factura/XML
                         </button>
                       )}
                     </div>
@@ -1290,10 +1806,39 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
                     {/* MIDDLE COLUMN: Datos del Documento Factura */}
                     <div className="md:col-span-4 space-y-3.5">
-                      <div className="text-[9.5px] uppercase font-bold text-slate-400 tracking-wider select-none">
-                        Datos del Archivo XML / Factura
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[9.5px] uppercase font-bold text-slate-400 tracking-wider select-none">
+                          Datos del Archivo XML / Factura
+                        </div>
+                        <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/60 px-2 py-1 text-[10px] font-bold text-indigo-700 transition-colors hover:bg-indigo-100">
+                          <Upload className="h-3 w-3" />
+                          Cargar XML
+                          <input
+                            type="file"
+                            accept=".xml,application/xml,text/xml"
+                            className="sr-only"
+                            onChange={event => {
+                              const file = event.target.files?.[0];
+                              if (file) void handleCfdiFile(item.id, file);
+                              event.currentTarget.value = "";
+                            }}
+                          />
+                        </label>
                       </div>
-                      
+                      {xmlImportStatuses[item.id] && (
+                        <div
+                          role={xmlImportStatuses[item.id].type === "error" ? "alert" : "status"}
+                          className={`flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-[10px] font-semibold leading-snug ${
+                            xmlImportStatuses[item.id].type === "error"
+                              ? "border-rose-200 bg-rose-50 text-rose-700"
+                              : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          }`}
+                        >
+                          {xmlImportStatuses[item.id].type === "error" && <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />}
+                          <span>{xmlImportStatuses[item.id].message}</span>
+                        </div>
+                      )}
+
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1.5">
                           Número de Factura <RequiredMark /> (Folio Digital / UUID)
@@ -1582,6 +2127,53 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
       </div>
 
+      {retireInvoiceDraft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-xl border border-amber-200 bg-white shadow-2xl">
+            <div className="border-b border-amber-100 bg-amber-50 px-5 py-4">
+              <h3 className="text-sm font-black text-amber-950">Retirar factura/XML de esta CLC</h3>
+              <p className="mt-1 text-[11px] font-semibold text-amber-800">
+                UUID: {retireInvoiceDraft.uuid.toUpperCase()}
+              </p>
+            </div>
+            <div className="space-y-3 p-5">
+              <p className="text-xs font-semibold leading-relaxed text-slate-600">
+                El registro conservará trazabilidad y quedará disponible para otra CLC. No se permite retirar facturas de CLC finalizadas.
+              </p>
+              <label className="block text-[11px] font-bold text-slate-700">
+                Motivo obligatorio <RequiredMark />
+              </label>
+              <textarea
+                autoFocus
+                rows={3}
+                value={retireReason}
+                onChange={event => setRetireReason(event.target.value)}
+                placeholder="Describe por qué se registró en la CLC incorrecta..."
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 focus:ring-1 focus:ring-amber-500"
+              />
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+              <button
+                type="button"
+                disabled={isRetiringInvoice}
+                onClick={() => setRetireInvoiceDraft(null)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isRetiringInvoice || !retireReason.trim()}
+                onClick={() => void confirmRetireInvoice()}
+                className="rounded-lg bg-amber-700 px-4 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isRetiringInvoice ? "Retirando..." : "Confirmar retiro"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {budgetRecordDraft && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
@@ -1663,5 +2255,4 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     </div>
   );
 }
-
 

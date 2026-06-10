@@ -81,6 +81,13 @@ export interface SupabaseFinalizeMutationResult extends AppMetaSnapshot {
   finalizedDoc: CLCDocument;
 }
 
+export interface InvoiceUsage {
+  uuid: string;
+  clcId: string;
+  folio: string;
+  partidaId: string;
+}
+
 export const EMPTY_DOCUMENT_METRICS: AppDocumentMetrics = {
   totalDocuments: 0,
   finalizedCount: 0,
@@ -153,6 +160,15 @@ async function callRpc<T>(name: string, args: Record<string, unknown>): Promise<
     if (name === "clc_set_next_folio_number" && /schema cache|Could not find the function/i.test(error.message)) {
       throw new Error(
         "No se encontro la funcion de Supabase para modificar folios. Ejecuta las migraciones pendientes, incluida supabase/migrations/20260608020000_clc_light_mutations.sql, y despues recarga el schema cache."
+      );
+    }
+
+    if (
+      (name === "clc_check_invoice_uuid" || name === "clc_retire_invoice") &&
+      /schema cache|Could not find the function/i.test(error.message)
+    ) {
+      throw new Error(
+        "Falta instalar el registro central de facturas. Ejecuta supabase/migrations/20260610000000_clc_invoice_registry.sql y recarga el schema cache."
       );
     }
 
@@ -255,4 +271,32 @@ export async function setSupabaseNextFolioNumber(anio: number, nextNumber: numbe
     p_app_key: supabaseAppKey
   });
   return normalizeMeta(payload);
+}
+
+export async function checkSupabaseInvoiceUsage(
+  uuid: string,
+  currentDocumentId?: string,
+  currentItemId?: string
+): Promise<InvoiceUsage | null> {
+  return callRpc<InvoiceUsage | null>("clc_check_invoice_uuid", {
+    p_uuid: uuid,
+    p_current_clc_id: currentDocumentId || null,
+    p_current_partida_id: currentItemId || null,
+    p_app_key: supabaseAppKey
+  });
+}
+
+export async function retireSupabaseInvoiceUsage(
+  uuid: string,
+  documentId: string,
+  itemId: string,
+  reason: string
+) {
+  return callRpc<{ removed: boolean }>("clc_retire_invoice", {
+    p_uuid: uuid,
+    p_clc_id: documentId,
+    p_partida_id: itemId,
+    p_reason: reason,
+    p_app_key: supabaseAppKey
+  });
 }

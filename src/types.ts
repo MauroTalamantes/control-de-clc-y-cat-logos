@@ -15,6 +15,9 @@ export interface Bank {
   nombre: string; // e.g. "SANTANDER"
   cuenta: string; // e.g. "65509270940"
   clabe: string; // e.g. "01493065509270940"
+  providerId?: string;
+  isDefault?: boolean;
+  active?: boolean;
 }
 
 export interface BankName {
@@ -26,6 +29,7 @@ export interface Provider {
   id: string;
   nombre: string; // e.g. "MULTISERVICIO LA PLATA S.A. DE C.V."
   rfc: string; // e.g. "MPL020607CX5"
+  active?: boolean;
 }
 
 export interface BudgetSource {
@@ -87,6 +91,22 @@ export interface CLCItem {
   iva: number;
   isr: number;
   importe: number;
+  cfdi?: CfdiMetadata;
+}
+
+export interface CfdiMetadata {
+  uuid: string;
+  version: string;
+  serie: string;
+  folio: string;
+  rfcEmisor: string;
+  nombreEmisor: string;
+  rfcReceptor: string;
+  concepto: string;
+  moneda: string;
+  formaPago: string;
+  metodoPago: string;
+  xmlHash: string;
 }
 
 export interface CLCDocument {

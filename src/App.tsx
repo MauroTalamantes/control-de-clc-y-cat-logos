@@ -444,9 +444,9 @@ export default function App() {
       unidadAdministrativaId: "sim",
       unidadClave: deptName.includes("OBRAS") ? "510" : "540",
       unidadNombre: deptName,
-      bancoNombre: "BANORTE",
-      bancoCuenta: "98765432101",
-      bancoClabe: "072180009876543210",
+      bancoNombre: deptName.includes("OBRAS") ? "BANORTE" : "BBVA BANCOMER",
+      bancoCuenta: deptName.includes("OBRAS") ? "98765432101" : "01234567890",
+      bancoClabe: deptName.includes("OBRAS") ? "072180009876543210" : "012180001234567890",
       proveedorNombre: providerName,
       proveedorRfc: deptName.includes("OBRAS") ? "CPR110418LL9" : "AIG150912TS8",
       items: [
