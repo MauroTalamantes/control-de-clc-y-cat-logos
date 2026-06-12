@@ -121,6 +121,7 @@ export interface CLCDocument {
   bancoClabe: string;
   proveedorNombre: string;
   proveedorRfc: string;
+  reposicionFondo?: boolean;
   items: CLCItem[];
   concepto: string; // e.g. "COMBUSTIBLE CORRESPONDIENTE AL MES DE ABRIL DEL 2026"
   solicitaNombre: string;

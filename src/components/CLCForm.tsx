@@ -49,6 +49,7 @@ interface SavedCLCFormDraft {
   selectedAutoriza1Id: string;
   selectedAutoriza2Id: string;
   autoIva: boolean;
+  reposicionFondo: boolean;
 }
 
 interface BudgetPickerOption {
@@ -110,6 +111,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const [selectedAutoriza2Id, setSelectedAutoriza2Id] = useState<string>("");
   
   const [autoIva, setAutoIva] = useState<boolean>(true);
+  const [reposicionFondo, setReposicionFondo] = useState<boolean>(false);
   const [bancoSearch, setBancoSearch] = useState<string>("");
   const [isBancoPickerOpen, setIsBancoPickerOpen] = useState(false);
   const [fuenteSearch, setFuenteSearch] = useState<Record<string, string>>({});
@@ -356,6 +358,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       setSelectedProveedorId(matchedProveedor ? matchedProveedor.id : "custom");
       setCustomProveedorNombre(matchedProveedor ? "" : documentToEdit.proveedorNombre);
       setProveedorRfc(documentToEdit.proveedorRfc);
+      setReposicionFondo(documentToEdit.reposicionFondo ?? false);
       
       setItems(documentToEdit.items);
       setConcepto(documentToEdit.concepto);
@@ -390,6 +393,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
             setSelectedAutoriza1Id(draft.selectedAutoriza1Id || "");
             setSelectedAutoriza2Id(draft.selectedAutoriza2Id || "");
             setAutoIva(draft.autoIva ?? true);
+            setReposicionFondo(draft.reposicionFondo ?? false);
             return;
           }
         } catch (err) {
@@ -410,6 +414,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       setProveedorRfc("");
       setCustomProveedorNombre("");
       setCustomBancoNombre("");
+      setReposicionFondo(false);
       
       const solic = catalogs.firmas.find(f => f.tipo === "Solicita");
       if (solic) setSelectedSolicitaId(solic.id);
@@ -473,6 +478,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       selectedAutoriza1Id,
       selectedAutoriza2Id,
       autoIva,
+      reposicionFondo,
     };
 
     localStorage.setItem(FORM_AUTOSAVE_KEY, JSON.stringify(draft));
@@ -494,6 +500,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     selectedAutoriza1Id,
     selectedAutoriza2Id,
     autoIva,
+    reposicionFondo,
   ]);
 
   // Handle autocompletes
@@ -768,9 +775,17 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   });
 
   const resolveCfdiProvider = (cfdi: ParsedCfdi, expectedRfc: string) => {
+    if (reposicionFondo) {
+      return {
+        providerRfc: normalizeRfc(expectedRfc),
+        detected: false,
+        acceptedForReposicion: true
+      };
+    }
+
     if (normalizeRfc(expectedRfc)) {
       validateCfdiAgainstProvider(cfdi, expectedRfc);
-      return { providerRfc: normalizeRfc(expectedRfc), detected: false };
+      return { providerRfc: normalizeRfc(expectedRfc), detected: false, acceptedForReposicion: false };
     }
 
     const provider = getActiveProviderByRfc(catalogs, cfdi.rfcEmisor);
@@ -779,7 +794,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     }
 
     selectProviderAndPreferredAccount(provider);
-    return { providerRfc: normalizeRfc(provider.rfc), detected: true };
+    return { providerRfc: normalizeRfc(provider.rfc), detected: true, acceptedForReposicion: false };
   };
 
   const validateImportedCfdi = async (cfdi: ParsedCfdi, itemId?: string) => {
@@ -819,9 +834,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         ...prev,
         [itemId]: {
           type: "success",
-          message: providerMatch.detected
-            ? `Proveedor detectado desde XML y autollenado correctamente. XML cargado: ${reference}`
-            : `XML cargado: ${reference}`,
+          message: providerMatch.acceptedForReposicion
+            ? `XML aceptado para reposición de fondo: ${reference}`
+            : providerMatch.detected
+              ? `Proveedor detectado desde XML y autollenado correctamente. XML cargado: ${reference}`
+              : `XML cargado: ${reference}`,
         },
       }));
     } catch (error) {
@@ -870,9 +887,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
         results.push({
           fileName: file.name,
           success: true,
-          message: providerMatch.detected
-            ? `Proveedor detectado desde XML y autollenado correctamente. Cargado: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
-            : `Cargado: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
+          message: providerMatch.acceptedForReposicion
+            ? `Aceptado para reposición de fondo: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
+            : providerMatch.detected
+              ? `Proveedor detectado desde XML y autollenado correctamente. Cargado: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
+              : `Cargado: ${cfdi.referenciaFactura || cfdi.uuid.toUpperCase()}`
         });
       } catch (error) {
         results.push({
@@ -1117,7 +1136,11 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       }
       capturedUuids.add(normalizedItemUuid);
 
-      if (item.cfdi?.rfcEmisor && normalizeRfc(item.cfdi.rfcEmisor) !== normalizeRfc(proveedorRfc)) {
+      if (
+        !reposicionFondo &&
+        item.cfdi?.rfcEmisor &&
+        normalizeRfc(item.cfdi.rfcEmisor) !== normalizeRfc(proveedorRfc)
+      ) {
         alert(`Error en Factura #${i + 1}: El RFC emisor del XML no coincide con el RFC del proveedor seleccionado.`);
         return;
       }
@@ -1171,6 +1194,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       bancoClabe: bancoClabe,
       proveedorNombre: provNom,
       proveedorRfc: proveedorRfc.toUpperCase(),
+      reposicionFondo,
       items: validItems,
       concepto: concepto.trim(),
       solicitaNombre: solObj ? solObj.nombre : "ING. JOSE ANTONIO FLORES BERUMEN",
@@ -1642,7 +1666,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               </span>
             </div>
             
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100">
                 <Upload className="h-3.5 w-3.5" />
                 Cargar varios XML
@@ -1657,7 +1681,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                   }}
                 />
               </label>
-              <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
                 <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-650">
                   <input
                     type="checkbox"
@@ -1667,9 +1691,27 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                   />
                   Auto-Calcular I.V.A (16%)
                 </label>
+                <label
+                  className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-650"
+                  title="Permite cargar XML cuyo RFC emisor no exista en el catálogo o no coincida con el beneficiario de la CLC."
+                >
+                  <input
+                    type="checkbox"
+                    checked={reposicionFondo}
+                    onChange={e => setReposicionFondo(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  Reposición de fondo
+                </label>
               </div>
             </div>
           </div>
+
+          {reposicionFondo && (
+            <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+              Reposición de fondo activa: se aceptarán XML de emisores no registrados o distintos al beneficiario. Los UUID y archivos duplicados continúan bloqueados.
+            </div>
+          )}
 
           {xmlBatchResults.length > 0 && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-[11px] shadow-3xs">
@@ -2255,4 +2297,3 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     </div>
   );
 }
-
