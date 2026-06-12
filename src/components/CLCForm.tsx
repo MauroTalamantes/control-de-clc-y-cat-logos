@@ -86,6 +86,8 @@ interface AssociationNotice {
 }
 
 const RequiredMark = () => <span className="text-red-600 font-black" aria-hidden="true">*</span>;
+const NOT_APPLICABLE = "NO APLICA";
+const isNotApplicable = (value: string) => value.trim().toUpperCase() === NOT_APPLICABLE;
 
 export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, documentToEdit }: CLCFormProps) {
   // Setup standard state
@@ -234,6 +236,8 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   };
 
   const withManualCatalogRecords = (bancoNombre: string, proveedorNombre: string): AppCatalogs | null => {
+    if (reposicionFondo) return null;
+
     let nextCatalogs = catalogs;
     let changed = false;
     let providerId = selectedProveedorId !== "custom" ? selectedProveedorId : "";
@@ -514,6 +518,15 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     setCustomBancoNombre("");
     setBancoCuenta("");
     setBancoClabe("");
+  };
+
+  const handleReposicionFondoChange = (checked: boolean) => {
+    setReposicionFondo(checked);
+    setIsBancoPickerOpen(false);
+    if (!checked) {
+      if (isNotApplicable(proveedorRfc)) setProveedorRfc("");
+      if (isNotApplicable(bancoCuenta) || isNotApplicable(bancoClabe)) clearBankSelection();
+    }
   };
 
   const selectCatalogBank = (bank: Bank) => {
@@ -1026,69 +1039,72 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       return;
     }
 
-    if (!proveedorRfc.trim()) {
+    if (!reposicionFondo && (!proveedorRfc.trim() || isNotApplicable(proveedorRfc))) {
       alert("Error: El R.F.C. del Proveedor es obligatorio.");
       return;
     }
 
-    let bancoNom = "";
-    if (selectedBancoId === "custom") {
-      if (selectedBancoNombreId === "custom") {
-        bancoNom = customBancoNombre.trim();
+    let bancoNom = NOT_APPLICABLE;
+    if (!reposicionFondo) {
+      bancoNom = "";
+      if (selectedBancoId === "custom") {
+        if (selectedBancoNombreId === "custom") {
+          bancoNom = customBancoNombre.trim();
+        } else {
+          bancoNom = bancoNombres.find(bankName => bankName.id === selectedBancoNombreId)?.nombre || "";
+        }
       } else {
-        bancoNom = bancoNombres.find(bankName => bankName.id === selectedBancoNombreId)?.nombre || "";
+        const b = catalogs.bancos.find(b => b.id === selectedBancoId);
+        if (b) bancoNom = b.nombre;
       }
-    } else {
-      const b = catalogs.bancos.find(b => b.id === selectedBancoId);
-      if (b) bancoNom = b.nombre;
-    }
 
-    if (!bancoNom) {
-      alert("Error: El nombre del Banco es obligatorio.");
-      return;
-    }
+      if (!bancoNom || isNotApplicable(bancoNom)) {
+        alert("Error: El nombre del Banco es obligatorio.");
+        return;
+      }
 
-    if (!bancoCuenta.trim()) {
-      alert("Error: El Número de Cuenta bancaria es obligatorio.");
-      return;
-    }
+      if (!bancoCuenta.trim() || isNotApplicable(bancoCuenta)) {
+        alert("Error: El Número de Cuenta bancaria es obligatorio.");
+        return;
+      }
 
-    if (!bancoClabe.trim()) {
-      alert("Error: La CLABE Interbancaria es obligatoria.");
-      return;
-    }
+      if (!bancoClabe.trim() || isNotApplicable(bancoClabe)) {
+        alert("Error: La CLABE Interbancaria es obligatoria.");
+        return;
+      }
 
-    const selectedCatalogProvider = catalogs.proveedores.find(provider => provider.id === selectedProveedorId);
-    const selectedCatalogBankForSubmit = catalogs.bancos.find(bank => bank.id === selectedBancoId);
-    const manuallyMatchedProvider = selectedProveedorId === "custom"
-      ? getActiveProviderByRfc(catalogs, proveedorRfc)
-      : undefined;
-    const manuallyMatchedBank = selectedBancoId === "custom"
-      ? catalogs.bancos.find(bank => (
-          isCatalogRecordActive(bank) &&
-          (bank.clabe.trim() === bancoClabe.trim() || bank.cuenta.trim() === bancoCuenta.trim())
-        ))
-      : undefined;
-    if (
-      selectedCatalogProvider &&
-      normalizeRfc(selectedCatalogProvider.rfc) !== normalizeRfc(proveedorRfc)
-    ) {
-      alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
-      return;
-    }
-    if (
-      selectedCatalogBankForSubmit?.providerId &&
-      selectedCatalogBankForSubmit.providerId !== selectedProveedorId
-    ) {
-      alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
-      return;
-    }
-    if (
-      manuallyMatchedBank?.providerId &&
-      manuallyMatchedBank.providerId !== (selectedCatalogProvider?.id || manuallyMatchedProvider?.id)
-    ) {
-      alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
-      return;
+      const selectedCatalogProvider = catalogs.proveedores.find(provider => provider.id === selectedProveedorId);
+      const selectedCatalogBankForSubmit = catalogs.bancos.find(bank => bank.id === selectedBancoId);
+      const manuallyMatchedProvider = selectedProveedorId === "custom"
+        ? getActiveProviderByRfc(catalogs, proveedorRfc)
+        : undefined;
+      const manuallyMatchedBank = selectedBancoId === "custom"
+        ? catalogs.bancos.find(bank => (
+            isCatalogRecordActive(bank) &&
+            (bank.clabe.trim() === bancoClabe.trim() || bank.cuenta.trim() === bancoCuenta.trim())
+          ))
+        : undefined;
+      if (
+        selectedCatalogProvider &&
+        normalizeRfc(selectedCatalogProvider.rfc) !== normalizeRfc(proveedorRfc)
+      ) {
+        alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
+        return;
+      }
+      if (
+        selectedCatalogBankForSubmit?.providerId &&
+        selectedCatalogBankForSubmit.providerId !== selectedProveedorId
+      ) {
+        alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
+        return;
+      }
+      if (
+        manuallyMatchedBank?.providerId &&
+        manuallyMatchedBank.providerId !== (selectedCatalogProvider?.id || manuallyMatchedProvider?.id)
+      ) {
+        alert("La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.");
+        return;
+      }
     }
 
     const validItems = items.filter(it => it.numFactura.trim() !== "" || it.subTotal > 0);
@@ -1190,10 +1206,10 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       unidadClave: unidadeObj.clave,
       unidadNombre: unidadeObj.nombre,
       bancoNombre: bancoNom,
-      bancoCuenta: bancoCuenta,
-      bancoClabe: bancoClabe,
+      bancoCuenta: reposicionFondo ? NOT_APPLICABLE : bancoCuenta,
+      bancoClabe: reposicionFondo ? NOT_APPLICABLE : bancoClabe,
       proveedorNombre: provNom,
-      proveedorRfc: proveedorRfc.toUpperCase(),
+      proveedorRfc: reposicionFondo ? NOT_APPLICABLE : proveedorRfc.toUpperCase(),
       reposicionFondo,
       items: validItems,
       concepto: concepto.trim(),
@@ -1436,6 +1452,27 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
 
       {/* Main Forms Layout with numbered step blocks */}
       <div className="p-6 md:p-8 space-y-8">
+        <div className={`rounded-xl border px-4 py-3 ${
+          reposicionFondo ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"
+        }`}>
+          <label
+            className="inline-flex cursor-pointer items-center gap-2 text-xs font-black text-slate-750"
+            title="Permite registrar únicamente el nombre del beneficiario y cargar XML de emisores distintos."
+          >
+            <input
+              type="checkbox"
+              checked={reposicionFondo}
+              onChange={e => handleReposicionFondoChange(e.target.checked)}
+              className="h-4 w-4 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            Reposición de fondo
+          </label>
+          <p className={`mt-1 text-[11px] font-semibold ${reposicionFondo ? "text-amber-800" : "text-slate-500"}`}>
+            {reposicionFondo
+              ? "Activa: solo se requiere el nombre del beneficiario; RFC, banco, cuenta y CLABE se guardarán como NO APLICA. Los UUID y archivos duplicados continúan bloqueados."
+              : "Actívala antes de capturar el beneficiario cuando la CLC corresponda a una reposición de fondo."}
+          </p>
+        </div>
         
         {/* STEP 1 COGNITIVE BLOCK */}
         <div className="bg-slate-50/40 p-5 md:p-6 rounded-xl border border-slate-200/80 space-y-4">
@@ -1469,21 +1506,30 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
             {/* Banco dropdown and inputs */}
             <div className="lg:col-span-7 grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="relative" data-bank-picker>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Número de Cuenta <RequiredMark /></label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Número de Cuenta {!reposicionFondo && <RequiredMark />}
+                </label>
                 <button
                   type="button"
                   id="field-banco"
-                  onClick={() => setIsBancoPickerOpen(prev => !prev)}
-                  className="w-full min-h-10 text-left text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden flex items-center justify-between gap-2"
+                  onClick={() => {
+                    if (!reposicionFondo) setIsBancoPickerOpen(prev => !prev);
+                  }}
+                  disabled={reposicionFondo}
+                  className={`w-full min-h-10 text-left text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 text-slate-850 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden flex items-center justify-between gap-2 ${
+                    reposicionFondo ? "bg-slate-100 cursor-not-allowed" : "bg-white"
+                  }`}
                 >
                   <span className="truncate">
-                    {selectedBancoId === "custom"
+                    {reposicionFondo
+                      ? NOT_APPLICABLE
+                      : selectedBancoId === "custom"
                       ? bancoCuenta || "Registrar otro numero de cuenta"
                       : catalogs.bancos.find(b => b.id === selectedBancoId)?.cuenta || "Selecciona numero de cuenta..."}
                   </span>
                   <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${isBancoPickerOpen ? "rotate-180" : ""}`} />
                 </button>
-                {isBancoPickerOpen && (
+                {!reposicionFondo && isBancoPickerOpen && (
                   <div className="absolute z-40 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-xl p-2">
                     <input
                       type="text"
@@ -1527,7 +1573,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                     </button>
                   </div>
                 )}
-                {selectedBancoId === "custom" && (
+                {!reposicionFondo && selectedBancoId === "custom" && (
                   <input
                     type="text"
                     placeholder="Escribe el número de cuenta..."
@@ -1539,22 +1585,33 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">CLABE Interbancaria (18 d.) <RequiredMark /></label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  CLABE Interbancaria (18 d.) {!reposicionFondo && <RequiredMark />}
+                </label>
                 <input
                   type="text"
                   placeholder="Ej: 01493065509270940"
-                  value={bancoClabe}
+                  value={reposicionFondo ? NOT_APPLICABLE : bancoClabe}
                   onChange={e => setBancoClabe(e.target.value)}
-                  readOnly={selectedBancoId !== "custom"}
+                  readOnly={reposicionFondo || selectedBancoId !== "custom"}
                   className={`w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 text-slate-800 truncate ${
-                    selectedBancoId === "custom" ? "bg-white" : "bg-slate-100"
+                    !reposicionFondo && selectedBancoId === "custom" ? "bg-white" : "bg-slate-100"
                   }`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">Institución Bancaria <RequiredMark /></label>
-                {selectedBancoId === "custom" ? (
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Institución Bancaria {!reposicionFondo && <RequiredMark />}
+                </label>
+                {reposicionFondo ? (
+                  <input
+                    type="text"
+                    value={NOT_APPLICABLE}
+                    readOnly
+                    className="w-full text-xs font-semibold border border-slate-200 rounded-lg px-3 py-2.5 bg-slate-100 text-slate-800"
+                  />
+                ) : selectedBancoId === "custom" ? (
                   <>
                     <select
                       value={selectedBancoNombreId}
@@ -1589,7 +1646,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               </div>
             </div>
           </div>
-          {associationNotice && (
+          {!reposicionFondo && associationNotice && (
             <p
               role={associationNotice.type === "warning" ? "alert" : "status"}
               className={`text-[11px] font-semibold ${
@@ -1639,16 +1696,23 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
             </div>
 
             <div className="lg:col-span-4">
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">R.F.C. (Cédula Fiscal Beneficiario) <RequiredMark /></label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                R.F.C. (Cédula Fiscal Beneficiario) {!reposicionFondo && <RequiredMark />}
+              </label>
               <input
                 type="text"
                 placeholder="Ej: MPL020607CX5"
-                value={proveedorRfc}
+                value={reposicionFondo ? NOT_APPLICABLE : proveedorRfc}
                 onChange={e => setProveedorRfc(e.target.value.toUpperCase())}
-                className="w-full text-xs font-extrabold font-mono border border-slate-200 rounded-lg px-3 py-2.5 bg-white text-indigo-950 uppercase"
+                readOnly={reposicionFondo}
+                className={`w-full text-xs font-extrabold font-mono border border-slate-200 rounded-lg px-3 py-2.5 text-indigo-950 uppercase ${
+                  reposicionFondo ? "bg-slate-100" : "bg-white"
+                }`}
               />
               <span className="text-[10px] text-slate-400 block pl-1 mt-1 font-semibold selection:bg-slate-200">
-                Por favor, verifique homoclave para reportes SAT oficiales.
+                {reposicionFondo
+                  ? "No se valida RFC del beneficiario ni coincidencia con el emisor del XML."
+                  : "Por favor, verifique homoclave para reportes SAT oficiales."}
               </span>
             </div>
           </div>
@@ -1691,27 +1755,9 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                   />
                   Auto-Calcular I.V.A (16%)
                 </label>
-                <label
-                  className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-650"
-                  title="Permite cargar XML cuyo RFC emisor no exista en el catálogo o no coincida con el beneficiario de la CLC."
-                >
-                  <input
-                    type="checkbox"
-                    checked={reposicionFondo}
-                    onChange={e => setReposicionFondo(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded-sm border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                  />
-                  Reposición de fondo
-                </label>
               </div>
             </div>
           </div>
-
-          {reposicionFondo && (
-            <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-              Reposición de fondo activa: se aceptarán XML de emisores no registrados o distintos al beneficiario. Los UUID y archivos duplicados continúan bloqueados.
-            </div>
-          )}
 
           {xmlBatchResults.length > 0 && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-[11px] shadow-3xs">

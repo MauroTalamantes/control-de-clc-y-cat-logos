@@ -34,6 +34,8 @@ export function getDocumentCatalogBank(document: CLCDocument, catalogs: AppCatal
 }
 
 export function getProviderBankRelationshipError(document: CLCDocument, catalogs: AppCatalogs): string | null {
+  if (document.reposicionFondo) return null;
+
   const bank = getDocumentCatalogBank(document, catalogs);
   if (!bank) return null;
   if (!bank.providerId) return "La cuenta bancaria seleccionada no está vinculada a ningún proveedor.";

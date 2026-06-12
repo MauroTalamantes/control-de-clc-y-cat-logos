@@ -1,3 +1,73 @@
+create or replace function public.clc_validate_provider_bank_relation(p_document jsonb)
+returns void
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_catalogs jsonb;
+  v_provider_id text;
+  v_bank_provider_id text;
+begin
+  if lower(coalesce(p_document ->> 'reposicionFondo', 'false')) = 'true' then
+    return;
+  end if;
+
+  select catalogs into v_catalogs
+  from public.clc_app_settings
+  where id = 'default';
+
+  if coalesce(jsonb_typeof(v_catalogs), 'null') <> 'object' then
+    return;
+  end if;
+
+  select provider.value ->> 'id'
+  into v_provider_id
+  from jsonb_array_elements(
+    case when jsonb_typeof(v_catalogs -> 'proveedores') = 'array' then v_catalogs -> 'proveedores' else '[]'::jsonb end
+  ) provider(value)
+  where coalesce(provider.value ->> 'active', 'true') <> 'false'
+    and public.clc_normalize_rfc(provider.value ->> 'rfc') = public.clc_normalize_rfc(p_document ->> 'proveedorRfc')
+  limit 1;
+
+  select nullif(trim(bank.value ->> 'providerId'), '')
+  into v_bank_provider_id
+  from jsonb_array_elements(
+    case when jsonb_typeof(v_catalogs -> 'bancos') = 'array' then v_catalogs -> 'bancos' else '[]'::jsonb end
+  ) bank(value)
+  where coalesce(bank.value ->> 'active', 'true') <> 'false'
+    and (
+      (
+        nullif(regexp_replace(coalesce(bank.value ->> 'clabe', ''), '\s+', '', 'g'), '') is not null
+        and regexp_replace(coalesce(bank.value ->> 'clabe', ''), '\s+', '', 'g')
+          = regexp_replace(coalesce(p_document ->> 'bancoClabe', ''), '\s+', '', 'g')
+      )
+      or (
+        regexp_replace(coalesce(bank.value ->> 'cuenta', ''), '\s+', '', 'g')
+          = regexp_replace(coalesce(p_document ->> 'bancoCuenta', ''), '\s+', '', 'g')
+        and upper(trim(coalesce(bank.value ->> 'nombre', '')))
+          = upper(trim(coalesce(p_document ->> 'bancoNombre', '')))
+      )
+    )
+  limit 1;
+
+  if not found then
+    return;
+  end if;
+
+  if v_bank_provider_id is null then
+    raise exception 'La cuenta bancaria seleccionada no está vinculada a ningún proveedor.'
+      using errcode = '23514';
+  end if;
+
+  if v_provider_id is null or v_provider_id <> v_bank_provider_id then
+    raise exception 'La cuenta bancaria seleccionada no pertenece al proveedor seleccionado.'
+      using errcode = '23514';
+  end if;
+end;
+$$;
+
 create or replace function public.clc_sync_invoice_registry(p_document jsonb)
 returns void
 language plpgsql
@@ -185,3 +255,4 @@ end;
 $$;
 
 revoke all on function public.clc_sync_invoice_registry(jsonb) from public;
+revoke all on function public.clc_validate_provider_bank_relation(jsonb) from public;
