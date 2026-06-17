@@ -24,7 +24,11 @@ const DEFAULT_ROW_HEIGHT = 15;
 const SINGLE_CONCEPT_LIMIT = 1;
 const EXTENDED_ONE_PAGE_LIMIT = 22;
 const MULTIPAGE_CONCEPTS_PER_PAGE = 32;
-const PRINTABLE_HEIGHT_AT_WIDTH_FIT = 680;
+const PRINTABLE_HEIGHT_AT_WIDTH_FIT = 645;
+const POINTS_TO_CSS_PIXELS = 96 / 72;
+const EXCEL_MAX_ROW_HEIGHT = 409.5;
+const TEXT_LINE_HEIGHT_MULTIPLIER = 1.275;
+const TEXT_HEIGHT_PADDING = 2.7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
 const GENERATED_XLSX_MTIME = new Date(Date.UTC(2026, 0, 1));
@@ -32,7 +36,6 @@ const GENERATED_XLSX_MTIME = new Date(Date.UTC(2026, 0, 1));
 let templateBufferPromise: Promise<ArrayBuffer> | null = null;
 
 type XmlZip = Record<string, Uint8Array>;
-type PaginationMode = "normal" | "extended" | "multipage";
 
 interface FooterRowHeights {
   concept: number;
@@ -48,13 +51,20 @@ interface FooterRowHeights {
 }
 
 interface PaginationPlan {
-  mode: PaginationMode;
-  totalConceptos: number;
   visibleDetailRows: number;
-  detailRowHeight: number;
+  detailRowHeights: number[];
   conceptsPerPage: number;
   footerHeights: FooterRowHeights;
 }
+
+interface TextLayout {
+  text: string | number | null | undefined;
+  widthPoints: number;
+  fontSize: number;
+  fontFamily: string;
+}
+
+let textMeasureContext: CanvasRenderingContext2D | null | undefined;
 
 function parseXml(xml: string, label: string) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -423,6 +433,97 @@ function getConceptsPerPage(totalConceptos: number) {
   return MULTIPAGE_CONCEPTS_PER_PAGE;
 }
 
+function getTextMeasureContext() {
+  if (textMeasureContext !== undefined) return textMeasureContext;
+  if (typeof document === "undefined") {
+    textMeasureContext = null;
+    return textMeasureContext;
+  }
+
+  textMeasureContext = document.createElement("canvas").getContext("2d");
+  return textMeasureContext;
+}
+
+function measureTextWidthPoints(text: string, fontSize: number, fontFamily: string) {
+  const context = getTextMeasureContext();
+  if (!context) return text.length * fontSize * 0.62;
+
+  context.font = `${fontSize}pt "${fontFamily}"`;
+  return context.measureText(text).width / POINTS_TO_CSS_PIXELS;
+}
+
+function estimateWrappedLineCount(layout: TextLayout) {
+  const text = layout.text == null ? "" : String(layout.text);
+  if (!text) return 1;
+
+  const availableWidth = Math.max(layout.widthPoints, 1);
+  const spaceWidth = measureTextWidthPoints(" ", layout.fontSize, layout.fontFamily);
+  let lineCount = 0;
+
+  text.replace(/\r\n?/g, "\n").split("\n").forEach(paragraph => {
+    const words = paragraph.trim().split(/\s+/).filter(Boolean);
+    lineCount += 1;
+    if (!words.length) return;
+
+    let currentWidth = 0;
+    words.forEach(word => {
+      const wordWidth = measureTextWidthPoints(word, layout.fontSize, layout.fontFamily);
+
+      if (wordWidth <= availableWidth) {
+        const widthWithSpace = currentWidth ? currentWidth + spaceWidth + wordWidth : wordWidth;
+        if (widthWithSpace <= availableWidth) {
+          currentWidth = widthWithSpace;
+        } else {
+          lineCount += 1;
+          currentWidth = wordWidth;
+        }
+        return;
+      }
+
+      if (currentWidth) {
+        lineCount += 1;
+        currentWidth = 0;
+      }
+
+      Array.from(word).forEach(character => {
+        const characterWidth = measureTextWidthPoints(character, layout.fontSize, layout.fontFamily);
+        if (currentWidth && currentWidth + characterWidth > availableWidth) {
+          lineCount += 1;
+          currentWidth = 0;
+        }
+        currentWidth += characterWidth;
+      });
+    });
+  });
+
+  return Math.max(lineCount, 1);
+}
+
+function getContentAwareRowHeight(minimumHeight: number, layouts: TextLayout[]) {
+  const requiredHeight = layouts.reduce((height, layout) => {
+    const lines = estimateWrappedLineCount(layout);
+    return Math.max(height, lines * layout.fontSize * TEXT_LINE_HEIGHT_MULTIPLIER + TEXT_HEIGHT_PADDING);
+  }, minimumHeight);
+
+  return Math.min(EXCEL_MAX_ROW_HEIGHT, Math.ceil(requiredHeight * 4) / 4);
+}
+
+function getDetailRowHeights(doc: CLCDocument, baseHeight: number, visibleDetailRows: number) {
+  return Array.from({ length: visibleDetailRows }, (_, index) => {
+    const item = doc.items[index];
+    if (!item) return baseHeight;
+
+    return getContentAwareRowHeight(baseHeight, [
+      { text: item.oc, widthPoints: 31.8, fontSize: 9, fontFamily: "Arial MT" },
+      { text: item.fuenteClave, widthPoints: 54.6, fontSize: 8, fontFamily: "Arial" },
+      { text: item.proyectoClave, widthPoints: 52.2, fontSize: 8, fontFamily: "Arial" },
+      { text: item.objetoClave, widthPoints: 42, fontSize: 8, fontFamily: "Arial" },
+      { text: item.objetoNombre, widthPoints: 180, fontSize: 8, fontFamily: "Arial" },
+      { text: item.numFactura, widthPoints: 169.2, fontSize: 8, fontFamily: "Arial" }
+    ]);
+  });
+}
+
 // Compacts only footer/signature spacing, keeping the template styles and fonts intact.
 function getFooterHeightsByConceptCount(totalConceptos: number): FooterRowHeights {
   if (totalConceptos <= SINGLE_CONCEPT_LIMIT) {
@@ -529,20 +630,15 @@ function getFooterHeightsByConceptCount(totalConceptos: number): FooterRowHeight
   };
 }
 
-// Centralizes the CLC pagination mode, visible rows and row heights for one generation.
-function buildPaginationPlan(totalConceptos: number): PaginationPlan {
-  const mode: PaginationMode =
-    totalConceptos <= SINGLE_CONCEPT_LIMIT
-      ? "normal"
-      : totalConceptos <= EXTENDED_ONE_PAGE_LIMIT
-        ? "extended"
-        : "multipage";
+// Centralizes visible rows and content-aware heights for one generation.
+function buildPaginationPlan(doc: CLCDocument): PaginationPlan {
+  const totalConceptos = doc.items.length;
+  const visibleDetailRows = moveSignaturesToBottom(totalConceptos);
+  const baseDetailRowHeight = getRowHeightByConceptCount(totalConceptos);
 
   return {
-    mode,
-    totalConceptos,
-    visibleDetailRows: moveSignaturesToBottom(totalConceptos),
-    detailRowHeight: getRowHeightByConceptCount(totalConceptos),
+    visibleDetailRows,
+    detailRowHeights: getDetailRowHeights(doc, baseDetailRowHeight, visibleDetailRows),
     conceptsPerPage: getConceptsPerPage(totalConceptos),
     footerHeights: getFooterHeightsByConceptCount(totalConceptos)
   };
@@ -567,43 +663,106 @@ function sumRowHeights(sheetDoc: XMLDocument, startRow: number, endRow: number) 
   return total;
 }
 
-// Applies deterministic heights so Excel does not auto-fit rows differently when printing.
-function applyPaginationRowHeights(sheetDoc: XMLDocument, pagination: PaginationPlan, rowOffset: number) {
+// Applies deterministic content-aware heights because Excel cannot auto-fit merged cells reliably.
+function applyPaginationRowHeights(
+  sheetDoc: XMLDocument,
+  pagination: PaginationPlan,
+  rowOffset: number,
+  doc: CLCDocument,
+  footerText: string
+) {
+  setRowHeight(
+    sheetDoc,
+    3,
+    getContentAwareRowHeight(getRowHeight(sheetDoc, 3), [
+      { text: doc.unidadNombre, widthPoints: 284.4, fontSize: 9.5, fontFamily: "Arial" },
+      { text: doc.bancoNombre, widthPoints: 108.6, fontSize: 9, fontFamily: "Arial" },
+      { text: doc.bancoCuenta, widthPoints: 185.4, fontSize: 9, fontFamily: "Arial" },
+      { text: doc.bancoClabe, widthPoints: 208.2, fontSize: 9, fontFamily: "Arial" }
+    ])
+  );
+  setRowHeight(
+    sheetDoc,
+    5,
+    getContentAwareRowHeight(getRowHeight(sheetDoc, 5), [
+      { text: doc.proveedorNombre, widthPoints: 508.8, fontSize: 9, fontFamily: "Arial" },
+      { text: doc.proveedorRfc, widthPoints: 208.2, fontSize: 9, fontFamily: "Arial" }
+    ])
+  );
+
   const lastItemRow = FIRST_ITEM_ROW + pagination.visibleDetailRows - 1;
   for (let row = FIRST_ITEM_ROW; row <= lastItemRow; row += 1) {
-    setRowHeight(sheetDoc, row, pagination.detailRowHeight);
+    setRowHeight(sheetDoc, row, pagination.detailRowHeights[row - FIRST_ITEM_ROW]);
   }
 
-  setRowHeight(sheetDoc, BASE_CONCEPT_ROW + rowOffset, pagination.footerHeights.concept);
+  setRowHeight(
+    sheetDoc,
+    BASE_CONCEPT_ROW + rowOffset,
+    getContentAwareRowHeight(pagination.footerHeights.concept, [
+      { text: doc.concepto.toUpperCase(), widthPoints: 664.8, fontSize: 8, fontFamily: "Arial MT" }
+    ])
+  );
   setRowHeight(sheetDoc, BASE_CONCEPT_ROW + rowOffset + 1, pagination.footerHeights.spacerAfterConcept);
   setRowHeight(sheetDoc, BASE_CONCEPT_ROW + rowOffset + 2, pagination.footerHeights.signatureSeparator);
   setRowHeight(sheetDoc, BASE_SIGNATURE_LABEL_ROW + rowOffset, pagination.footerHeights.signatureLabel);
-  setRowHeight(sheetDoc, BASE_SIGNATURE_NAME_ROW + rowOffset, pagination.footerHeights.signatureName);
-  setRowHeight(sheetDoc, BASE_SIGNATURE_TITLE_ROW + rowOffset, pagination.footerHeights.signatureTitle);
+  setRowHeight(
+    sheetDoc,
+    BASE_SIGNATURE_NAME_ROW + rowOffset,
+    getContentAwareRowHeight(pagination.footerHeights.signatureName, [
+      { text: doc.solicitaNombre, widthPoints: 284.4, fontSize: 10, fontFamily: "Times New Roman" },
+      { text: doc.autoriza1Nombre, widthPoints: 219.6, fontSize: 10, fontFamily: "Times New Roman" },
+      { text: doc.autoriza2Nombre, widthPoints: 290.4, fontSize: 10, fontFamily: "Times New Roman" }
+    ])
+  );
+  setRowHeight(
+    sheetDoc,
+    BASE_SIGNATURE_TITLE_ROW + rowOffset,
+    getContentAwareRowHeight(pagination.footerHeights.signatureTitle, [
+      { text: doc.solicitaPuesto, widthPoints: 284.4, fontSize: 9, fontFamily: "Arial MT" },
+      { text: doc.autoriza1Puesto, widthPoints: 219.6, fontSize: 9, fontFamily: "Arial MT" },
+      { text: doc.autoriza2Puesto, widthPoints: 290.4, fontSize: 9, fontFamily: "Arial MT" }
+    ])
+  );
   setRowHeight(sheetDoc, BASE_SIGNATURE_SPACER_ROW + rowOffset, pagination.footerHeights.signatureSpacer);
   setRowHeight(sheetDoc, BASE_FOOTER_SPACER_ROW + rowOffset, pagination.footerHeights.footerSpacer);
-  setRowHeight(sheetDoc, BASE_FOOTER_ROW + rowOffset, pagination.footerHeights.footer);
+  setRowHeight(
+    sheetDoc,
+    BASE_FOOTER_ROW + rowOffset,
+    getContentAwareRowHeight(pagination.footerHeights.footer, [
+      { text: footerText, widthPoints: 873, fontSize: 6, fontFamily: "Arial MT" }
+    ])
+  );
   setRowHeight(sheetDoc, BASE_DATE_ROW + rowOffset, pagination.footerHeights.date);
 }
 
-function getDetailPageBreakRows(pagination: PaginationPlan) {
-  if (pagination.mode !== "multipage") return [];
-
+function getDetailPageBreakRows(sheetDoc: XMLDocument, pagination: PaginationPlan) {
   const breakRows: number[] = [];
-  for (
-    let nextConceptIndex = pagination.conceptsPerPage;
-    nextConceptIndex < pagination.totalConceptos;
-    nextConceptIndex += pagination.conceptsPerPage
-  ) {
-    breakRows.push(FIRST_ITEM_ROW + nextConceptIndex);
+  const lastItemRow = FIRST_ITEM_ROW + pagination.visibleDetailRows - 1;
+  let currentPageHeight = sumRowHeights(sheetDoc, 1, FIRST_ITEM_ROW - 1);
+  let conceptsOnCurrentPage = 0;
+
+  for (let row = FIRST_ITEM_ROW; row <= lastItemRow; row += 1) {
+    const rowHeight = getRowHeight(sheetDoc, row);
+    const exceedsPageHeight = currentPageHeight + rowHeight > PRINTABLE_HEIGHT_AT_WIDTH_FIT;
+    const exceedsConceptLimit = conceptsOnCurrentPage >= pagination.conceptsPerPage;
+
+    if (row > FIRST_ITEM_ROW && (exceedsPageHeight || exceedsConceptLimit)) {
+      breakRows.push(row);
+      currentPageHeight = 0;
+      conceptsOnCurrentPage = 0;
+    }
+
+    currentPageHeight += rowHeight;
+    conceptsOnCurrentPage += 1;
   }
+
   return breakRows;
 }
 
 // Adds a final-page break before "Solicita:" when signatures, legal text and date
 // no longer fit together on the current printed page.
 function createSignaturePageIfNeeded(sheetDoc: XMLDocument, pagination: PaginationPlan, rowOffset: number) {
-  const breakRows = getDetailPageBreakRows(pagination);
+  const breakRows = getDetailPageBreakRows(sheetDoc, pagination);
   const protectedBlockStartRow = BASE_SIGNATURE_LABEL_ROW + rowOffset;
   const dateRow = BASE_DATE_ROW + rowOffset;
   const currentPageStartRow = breakRows.length ? breakRows[breakRows.length - 1] : 1;
@@ -806,7 +965,9 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   const sheetPath = getSheetPath(zip, TEMPLATE_SHEET_NAME);
   const sheetDoc = parseXml(strFromU8(zip[sheetPath]), sheetPath);
   const sharedStrings = readSharedStrings(zip);
-  const pagination = buildPaginationPlan(doc.items.length);
+  const originalFooterText = getCellText(sheetDoc, sharedStrings, `C${BASE_FOOTER_ROW}`);
+  const footerText = buildFooterText(originalFooterText, doc.elaboro || "");
+  const pagination = buildPaginationPlan(doc);
   const itemCount = pagination.visibleDetailRows;
   const rowOffset = cloneItemRows(sheetDoc, itemCount);
 
@@ -814,7 +975,7 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   applyPrintSettings(sheetDoc);
   adjustWorkbookPrintArea(zip, TEMPLATE_SHEET_NAME, rowOffset);
   adjustMergeCells(sheetDoc, rowOffset);
-  applyPaginationRowHeights(sheetDoc, pagination, rowOffset);
+  applyPaginationRowHeights(sheetDoc, pagination, rowOffset, doc, footerText);
   insertManualPageBreaks(sheetDoc, createSignaturePageIfNeeded(sheetDoc, pagination, rowOffset));
   fillGeneralData(sheetDoc, doc);
   fillItemRows(sheetDoc, doc, itemCount);

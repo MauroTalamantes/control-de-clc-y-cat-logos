@@ -28,6 +28,11 @@ interface FinalizePayload extends SupabaseMetaPayload {
   finalizedDoc: CLCDocument;
 }
 
+interface UpdateFinalizedPayload extends SupabaseMetaPayload {
+  document?: CLCDocument;
+  finalizedDoc?: CLCDocument;
+}
+
 export type DocumentListSortKey = "fecha" | "folio" | "nombre" | "concepto" | "proveedor";
 export type DocumentListSortDirection = "asc" | "desc";
 
@@ -172,6 +177,12 @@ async function callRpc<T>(name: string, args: Record<string, unknown>): Promise<
       );
     }
 
+    if (name === "clc_update_finalized_document" && /schema cache|Could not find the function/i.test(error.message)) {
+      throw new Error(
+        "Falta instalar la funcion de Supabase para editar CLC finalizadas. Ejecuta supabase/migrations/20260617000000_clc_update_finalized_documents.sql y recarga el schema cache."
+      );
+    }
+
     throw new Error(`${name}: ${error.message}`);
   }
 
@@ -238,6 +249,17 @@ export async function saveSupabaseDocument(document: CLCDocument) {
   return {
     ...normalizeMeta(payload),
     document: payload.document || document
+  };
+}
+
+export async function updateSupabaseFinalizedDocument(document: CLCDocument) {
+  const payload = await callRpc<UpdateFinalizedPayload>("clc_update_finalized_document", {
+    p_document: document,
+    p_app_key: supabaseAppKey
+  });
+  return {
+    ...normalizeMeta(payload),
+    document: payload.document || payload.finalizedDoc || document
   };
 }
 

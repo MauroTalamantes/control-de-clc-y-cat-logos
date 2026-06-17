@@ -9,6 +9,7 @@ import { INITIAL_CATALOGS, INITIAL_DOCUMENTS } from "./utils/initialData";
 import {
   deletePersistedDocument,
   finalizeAndPersistDocument,
+  persistFinalizedDocument,
   loadAppMetaData,
   persistDocument,
   persistCatalogs,
@@ -315,7 +316,7 @@ export default function App() {
       };
 
       updatedDocs = updatedDocs.map(d => d.id === doc.id ? updatedFinalizedDoc : d);
-      const persisted = await persistDocument(updatedFinalizedDoc, updatedDocs);
+      const persisted = await persistFinalizedDocument(updatedFinalizedDoc, updatedDocs);
       if (isSupabaseMetaResult(persisted)) {
         applyAppMeta(persisted, { updateDocuments: false });
         const highestFolioAfterSave = persisted.folioYearSummaries.find(summary => summary.anio === parsedFolio.year)
@@ -347,7 +348,7 @@ export default function App() {
         ...prev
       ]);
 
-      await downloadDocExcel(updatedFinalizedDoc, { openAfterSave: false });
+      await downloadDocExcel(updatedFinalizedDoc, { openAfterSave: true });
       alert(`Expediente ${updatedFinalizedDoc.folio} actualizado correctamente.`);
     } else if (finalize) {
       const persisted = await finalizeAndPersistDocument(doc, documents);

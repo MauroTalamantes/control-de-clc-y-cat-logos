@@ -23,6 +23,7 @@ import {
   loadSupabaseAppMeta,
   saveSupabaseCatalogs,
   saveSupabaseDocument,
+  updateSupabaseFinalizedDocument,
   retireSupabaseInvoiceUsage,
   setSupabaseNextFolioNumber,
   type AppMetaSnapshot,
@@ -285,6 +286,19 @@ export async function persistDocument(
 ): Promise<SupabaseDocumentMutationResult | CLCDocument[]> {
   if (isSupabaseConfigured()) {
     return saveSupabaseDocument(document);
+  }
+
+  await assertLocalProviderBankRelationship(document);
+  await persistDocuments(optimisticDocuments);
+  return optimisticDocuments;
+}
+
+export async function persistFinalizedDocument(
+  document: CLCDocument,
+  optimisticDocuments: CLCDocument[]
+): Promise<SupabaseDocumentMutationResult | CLCDocument[]> {
+  if (isSupabaseConfigured()) {
+    return updateSupabaseFinalizedDocument(document);
   }
 
   await assertLocalProviderBankRelationship(document);

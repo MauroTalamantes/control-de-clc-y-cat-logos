@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import { AppCatalogs, CLCDocument, CLCItem, AdministrativeUnit, Bank, Provider } from "../types";
 import { Plus, Trash, Check, AlertTriangle, Calculator, FileText, ChevronRight, ChevronDown, Upload, ArchiveX } from "lucide-react";
 import {
@@ -130,6 +130,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const [associationNotice, setAssociationNotice] = useState<AssociationNotice | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const initializedNewFormRef = useRef(false);
+  const initializedEditDocumentIdRef = useRef<string | null>(null);
   const bancoNombres = catalogs.bancoNombres?.length
     ? catalogs.bancoNombres
     : Array.from(new Set(catalogs.bancos.map(banco => banco.nombre))).map((nombre, index) => ({
@@ -340,6 +341,8 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   // Initialize form
   useEffect(() => {
     if (documentToEdit) {
+      if (initializedEditDocumentIdRef.current === documentToEdit.id) return;
+      initializedEditDocumentIdRef.current = documentToEdit.id;
       initializedNewFormRef.current = false;
       setFolio(documentToEdit.folio || "");
       setAño(documentToEdit.año);
@@ -376,6 +379,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       const matchedAutoriza2 = catalogs.firmas.find(f => f.nombre === documentToEdit.autoriza2Nombre);
       setSelectedAutoriza2Id(matchedAutoriza2 ? matchedAutoriza2.id : "");
     } else {
+      initializedEditDocumentIdRef.current = null;
       if (initializedNewFormRef.current) return;
       initializedNewFormRef.current = true;
       setFolio("");
@@ -737,16 +741,18 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     return value.includes(".") ? `${formattedInteger}.${decimalPart ?? ""}` : formattedInteger;
   };
 
-  const handleCurrencyChange = (itemId: string, field: CurrencyField, rawValue: string) => {
+  const handleCurrencyChange = (itemId: string, field: CurrencyField, event: ChangeEvent<HTMLInputElement>) => {
     const draftKey = getCurrencyDraftKey(itemId, field);
+    const input = event.currentTarget;
+    const rawValue = input.value;
     const sanitizedValue = sanitizeCurrencyDraft(rawValue);
-    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: formatCurrencyDraft(sanitizedValue) }));
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: rawValue }));
     updateItem(itemId, field, parseCurrency(sanitizedValue));
   };
 
   const handleCurrencyFocus = (itemId: string, field: CurrencyField, value: number) => {
     const draftKey = getCurrencyDraftKey(itemId, field);
-    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: value ? formatCurrencyInput(value) : "" }));
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: value ? String(value) : "" }));
   };
 
   const handleCurrencyBlur = (itemId: string, field: CurrencyField) => {
@@ -1197,6 +1203,15 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     const solObj = catalogs.firmas.find(f => f.id === selectedSolicitaId);
     const aut1Obj = catalogs.firmas.find(f => f.id === selectedAutoriza1Id);
     const aut2Obj = catalogs.firmas.find(f => f.id === selectedAutoriza2Id);
+    const normalizedValidItems = validItems.map(item => ({
+      ...item,
+      oc: item.oc.trim().toUpperCase(),
+      fuenteClave: item.fuenteClave.trim().toUpperCase(),
+      proyectoClave: item.proyectoClave.trim().toUpperCase(),
+      objetoClave: item.objetoClave.trim().toUpperCase(),
+      objetoNombre: item.objetoNombre.trim().toUpperCase(),
+      numFactura: item.numFactura.trim().toUpperCase(),
+    }));
 
     const doc: CLCDocument = {
       id: documentToEdit?.id || "doc_" + Math.random().toString(36).substr(2, 9),
@@ -1205,14 +1220,14 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       unidadAdministrativaId: unidadeObj.id,
       unidadClave: unidadeObj.clave,
       unidadNombre: unidadeObj.nombre,
-      bancoNombre: bancoNom,
-      bancoCuenta: reposicionFondo ? NOT_APPLICABLE : bancoCuenta,
-      bancoClabe: reposicionFondo ? NOT_APPLICABLE : bancoClabe,
-      proveedorNombre: provNom,
-      proveedorRfc: reposicionFondo ? NOT_APPLICABLE : proveedorRfc.toUpperCase(),
+      bancoNombre: reposicionFondo ? NOT_APPLICABLE : normalizeCatalogText(bancoNom),
+      bancoCuenta: reposicionFondo ? NOT_APPLICABLE : bancoCuenta.trim(),
+      bancoClabe: reposicionFondo ? NOT_APPLICABLE : bancoClabe.trim(),
+      proveedorNombre: normalizeCatalogText(provNom),
+      proveedorRfc: reposicionFondo ? NOT_APPLICABLE : normalizeCatalogText(proveedorRfc),
       reposicionFondo,
-      items: validItems,
-      concepto: concepto.trim(),
+      items: normalizedValidItems,
+      concepto: concepto.trim().toUpperCase(),
       solicitaNombre: solObj ? solObj.nombre : "ING. JOSE ANTONIO FLORES BERUMEN",
       solicitaPuesto: solObj ? solObj.puesto : "SECRETARIO DE SERVICIOS PUBLICOS MUNICIPALES",
       autoriza1Nombre: aut1Obj ? aut1Obj.nombre : "L.C. JESÚS RODRÍGUEZ DEL MURO",
@@ -1427,9 +1442,9 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
               <input
                 type="text"
                 value={folio}
-                onChange={event => setFolio(event.target.value.toUpperCase())}
+                onChange={event => setFolio(event.target.value)}
                 onBlur={() => setFolio(normalizeFolioInput(folio))}
-                className="bg-white border border-indigo-200 rounded-xl px-4 py-2 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500/30 focus:outline-hidden shadow-sm min-w-40 font-mono"
+                className="bg-white border border-indigo-200 rounded-xl px-4 py-2 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-indigo-500/30 focus:outline-hidden shadow-sm min-w-40 font-mono uppercase"
               />
             </div>
           )}
@@ -1629,8 +1644,8 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                         type="text"
                         placeholder="Escribe el nombre del banco..."
                         value={customBancoNombre}
-                        onChange={e => setCustomBancoNombre(e.target.value.toUpperCase())}
-                        className="mt-1.5 w-full text-xs border border-slate-350 rounded-lg px-2.5 py-2 bg-amber-50 text-slate-800 font-bold placeholder:text-amber-700/55 focus:outline-hidden"
+                        onChange={event => setCustomBancoNombre(event.target.value)}
+                        className="mt-1.5 w-full text-xs border border-slate-350 rounded-lg px-2.5 py-2 bg-amber-50 text-slate-800 font-bold uppercase placeholder:text-amber-700/55 focus:outline-hidden"
                       />
                     )}
                   </>
@@ -1689,8 +1704,8 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                   type="text"
                   placeholder="Completo nombre o Razón Social del Proveedor..."
                   value={customProveedorNombre}
-                  onChange={e => setCustomProveedorNombre(e.target.value.toUpperCase())}
-                  className="mt-1.5 w-full text-xs border border-slate-350 rounded-lg px-2.5 py-2.5 bg-amber-50 text-slate-800 font-bold placeholder:text-amber-700/55 focus:outline-hidden"
+                  onChange={event => setCustomProveedorNombre(event.target.value)}
+                  className="mt-1.5 w-full text-xs border border-slate-350 rounded-lg px-2.5 py-2.5 bg-amber-50 text-slate-800 font-bold uppercase placeholder:text-amber-700/55 focus:outline-hidden"
                 />
               )}
             </div>
@@ -1703,7 +1718,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                 type="text"
                 placeholder="Ej: MPL020607CX5"
                 value={reposicionFondo ? NOT_APPLICABLE : proveedorRfc}
-                onChange={e => setProveedorRfc(e.target.value.toUpperCase())}
+                onChange={event => setProveedorRfc(event.target.value)}
                 readOnly={reposicionFondo}
                 className={`w-full text-xs font-extrabold font-mono border border-slate-200 rounded-lg px-3 py-2.5 text-indigo-950 uppercase ${
                   reposicionFondo ? "bg-slate-100" : "bg-white"
@@ -1935,8 +1950,8 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                           type="text"
                           placeholder="Ingresa clave o UUID del comprobante..."
                           value={item.numFactura}
-                          onChange={e => updateItem(item.id, "numFactura", e.target.value.toUpperCase())}
-                          className="w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 text-indigo-950 focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                          onChange={event => updateItem(item.id, "numFactura", event.target.value)}
+                          className="w-full text-xs font-bold font-mono border border-slate-200 rounded-lg px-3 py-2.5 text-indigo-950 uppercase focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                         />
                       </div>
 
@@ -1960,8 +1975,8 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                             type="text"
                             placeholder="OC-0000"
                             value={item.oc}
-                            onChange={e => updateItem(item.id, "oc", e.target.value.toUpperCase())}
-                            className="w-full text-xs font-semibold font-mono border border-slate-200 rounded-lg px-2.5 py-2 text-slate-850"
+                            onChange={event => updateItem(item.id, "oc", event.target.value)}
+                            className="w-full text-xs font-semibold font-mono border border-slate-200 rounded-lg px-2.5 py-2 text-slate-850 uppercase"
                           />
                         </div>
                       </div>
@@ -1985,7 +2000,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               value={currencyDrafts[getCurrencyDraftKey(item.id, "subTotal")] ?? formatCurrencyInput(item.subTotal)}
                               onFocus={() => handleCurrencyFocus(item.id, "subTotal", item.subTotal)}
                               onBlur={() => handleCurrencyBlur(item.id, "subTotal")}
-                              onChange={e => handleCurrencyChange(item.id, "subTotal", e.target.value)}
+                              onChange={event => handleCurrencyChange(item.id, "subTotal", event)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 font-bold font-mono text-slate-850"
                             />
                           </div>
@@ -2002,7 +2017,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               value={currencyDrafts[getCurrencyDraftKey(item.id, "descuento")] ?? formatCurrencyInput(item.descuento)}
                               onFocus={() => handleCurrencyFocus(item.id, "descuento", item.descuento)}
                               onBlur={() => handleCurrencyBlur(item.id, "descuento")}
-                              onChange={e => handleCurrencyChange(item.id, "descuento", e.target.value)}
+                              onChange={event => handleCurrencyChange(item.id, "descuento", event)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 font-mono text-slate-500"
                             />
                           </div>
@@ -2021,7 +2036,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               value={currencyDrafts[getCurrencyDraftKey(item.id, "iva")] ?? formatCurrencyInput(item.iva)}
                               onFocus={() => handleCurrencyFocus(item.id, "iva", item.iva)}
                               onBlur={() => handleCurrencyBlur(item.id, "iva")}
-                              onChange={e => handleCurrencyChange(item.id, "iva", e.target.value)}
+                              onChange={event => handleCurrencyChange(item.id, "iva", event)}
                               className={`w-full text-xs border border-slate-200 rounded-lg pl-5 pr-1 py-1.5 font-bold font-mono ${
                                 autoIva 
                                   ? "bg-slate-100 text-slate-500 border-dashed cursor-not-allowed" 
@@ -2042,7 +2057,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               value={currencyDrafts[getCurrencyDraftKey(item.id, "isr")] ?? formatCurrencyInput(item.isr)}
                               onFocus={() => handleCurrencyFocus(item.id, "isr", item.isr)}
                               onBlur={() => handleCurrencyBlur(item.id, "isr")}
-                              onChange={e => handleCurrencyChange(item.id, "isr", e.target.value)}
+                              onChange={event => handleCurrencyChange(item.id, "isr", event)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 text-rose-700 font-bold font-mono"
                             />
                           </div>
@@ -2091,7 +2106,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
             <textarea
               placeholder="Escribe la glosa o concepto oficial del expediente (ej: COMBUSTIBLE CORRESPONDIENTE AL MES DE...)"
               value={concepto}
-              onChange={e => setConcepto(e.target.value.toUpperCase())}
+              onChange={event => setConcepto(event.target.value)}
               rows={2}
               className="w-full text-xs font-bold border border-slate-200 rounded-lg px-3 py-2.5 text-slate-800 uppercase focus:ring-1 focus:ring-indigo-500 unicode-bidi-isolate"
             />
@@ -2299,9 +2314,9 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                   value={budgetRecordDraft.clave}
                   onChange={event => setBudgetRecordDraft({
                     ...budgetRecordDraft,
-                    clave: event.target.value.toUpperCase()
+                    clave: event.target.value
                   })}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-800 uppercase focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
 
@@ -2314,9 +2329,9 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                   value={budgetRecordDraft.description}
                   onChange={event => setBudgetRecordDraft({
                     ...budgetRecordDraft,
-                    description: event.target.value.toUpperCase()
+                    description: event.target.value
                   })}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 uppercase focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                 />
               </div>
             </div>
