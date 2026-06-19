@@ -61,6 +61,7 @@
     },
     "nsis": {
       "artifactName": "Control-de-CLC-y-Catalogos-Setup-${version}.${ext}",
+      "include": "build/installer.nsh",
       "oneClick": true,
       "perMachine": false,
       "allowElevation": false,
