@@ -1270,10 +1270,15 @@ const handleDownloadSelectedPDF = async () => {
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
                           <Building2 className="h-6 w-6" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="flex min-w-0 flex-1 flex-col">
                           <p className="text-xs font-extrabold uppercase tracking-wide text-[#0F8F8A]">Unidad administrativa</p>
                           <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.unidadNombre || "—"}</p>
-                          <p className="mt-1 text-xs font-medium text-[#475569]">Clave {selectedDoc.unidadClave || "—"}</p>
+                          <div className="mt-auto flex items-center gap-2 pt-3">
+                            <span className="text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Clave</span>
+                            <span className="rounded bg-teal-50 px-2.5 py-1 font-mono text-[11px] font-extrabold text-[#0F766E]">
+                              {selectedDoc.unidadClave || "—"}
+                            </span>
+                          </div>
                         </div>
                       </article>
 
@@ -1281,10 +1286,15 @@ const handleDownloadSelectedPDF = async () => {
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
                           <UserRound className="h-6 w-6" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="flex min-w-0 flex-1 flex-col">
                           <p className="text-xs font-extrabold uppercase tracking-wide text-[#7C3AED]">Proveedor</p>
                           <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.proveedorNombre || "—"}</p>
-                          <p className="mt-1 text-xs font-medium text-[#475569]">{selectedDoc.proveedorRfc || "—"}</p>
+                          <div className="mt-auto flex items-center gap-2 pt-3">
+                            <span className="text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">R.F.C.</span>
+                            <span className="rounded bg-violet-50 px-2.5 py-1 font-mono text-[11px] font-extrabold text-[#6D28D9]">
+                              {selectedDoc.proveedorRfc || "—"}
+                            </span>
+                          </div>
                         </div>
                       </article>
 
@@ -1292,11 +1302,23 @@ const handleDownloadSelectedPDF = async () => {
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
                           <Landmark className="h-6 w-6" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="flex min-w-0 flex-1 flex-col">
                           <p className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Datos bancarios</p>
                           <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.bancoNombre || "—"}</p>
-                          <p className="mt-1 text-xs font-medium text-[#475569]">Cuenta: <span className="font-mono">{selectedDoc.bancoCuenta || "—"}</span></p>
-                          <p className="mt-0.5 break-all text-xs font-medium text-[#475569]">CLABE: <span className="font-mono">{selectedDoc.bancoClabe || "—"}</span></p>
+                          <div className="mt-auto grid gap-2 pt-3 2xl:grid-cols-[minmax(90px,0.7fr)_minmax(150px,1.3fr)] 2xl:gap-3">
+                            <div className="min-w-0">
+                              <span className="block text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Cuenta</span>
+                              <span className="mt-1 inline-block max-w-full rounded bg-blue-50 px-2 py-1 font-mono text-[10px] font-extrabold text-[#1D4ED8]">
+                                {selectedDoc.bancoCuenta || "—"}
+                              </span>
+                            </div>
+                            <div className="min-w-0 2xl:border-l 2xl:border-[#D8E1EF] 2xl:pl-3">
+                              <span className="block text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">CLABE</span>
+                              <span className="mt-1 inline-block max-w-full break-all rounded bg-blue-50 px-2 py-1 font-mono text-[10px] font-extrabold text-[#1D4ED8]">
+                                {selectedDoc.bancoClabe || "—"}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </article>
                     </section>
