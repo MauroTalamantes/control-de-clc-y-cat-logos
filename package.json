@@ -1,7 +1,7 @@
 {
   "name": "control-de-clc-y-catalogos",
   "private": true,
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "Aplicacion de escritorio para control de CLC y catalogos.",
   "author": "Ayuntamiento de Guadalupe",
   "type": "module",
@@ -16,7 +16,7 @@
     "build": "vite build",
     "electron:build": "npm run release:validate && npm run build && electron-builder",
     "electron:publish": "npm run release:validate -- --require-head-tag && npm run build && electron-builder --publish always",
-     "release:patch": "npm version patch -m \"chore(release): v%s\" && npm run electron:publish",
+    "release:patch": "npm version patch -m \"chore(release): v%s\" && npm run electron:publish",
     "release:minor": "npm version minor -m \"chore(release): v%s\" && npm run electron:publish",
     "release:major": "npm version major -m \"chore(release): v%s\" && npm run electron:publish",
     "dist": "npm run electron:build",
