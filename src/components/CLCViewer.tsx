@@ -19,7 +19,17 @@ import {
   Printer,
   Loader2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Building2,
+  UserRound,
+  Landmark,
+  ShoppingCart,
+  CalendarDays,
+  CircleCheck,
+  PenLine,
+  ShieldCheck,
+  UsersRound,
+  ClipboardCheck
 } from "lucide-react";
 
 interface CLCViewerProps {
@@ -37,6 +47,15 @@ type TooltipState = { text: string; left: number; top: number } | null;
 type ExportAction = { docId: string; type: "excel" | "pdf" } | null;
 const MAX_OFFICIAL_PREVIEW_URLS = 4;
 const MAX_PREVIEW_PAGE_CACHE_ENTRIES = 5;
+
+const formatPreviewCurrency = (value: number) =>
+  `$ ${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatPreviewDate = (value?: string) => {
+  if (!value) return "—";
+  const [year, month, day] = value.slice(0, 10).split("-");
+  return year && month && day ? `${day}/${month}/${year}` : value;
+};
 
 export default function CLCViewer({ 
   documents,
@@ -471,6 +490,10 @@ const handleDownloadSelectedPDF = async () => {
       isActive = false;
     };
   }, [selectedDocPreviewKey]);
+
+  const previewTotal = selectedDoc?.items.reduce((sum, item) => sum + item.importe, 0) ?? 0;
+  const previewFirstItem = selectedDoc?.items[0];
+  const previewDate = previewFirstItem?.fechaFactura || selectedDoc?.fechaCreacion;
 
   return (
     <div className="space-y-6" id="clc-lists-viewer">
@@ -914,7 +937,7 @@ const handleDownloadSelectedPDF = async () => {
           
           {/* Modal Container */}
           <div
-            className="relative bg-slate-100 rounded-2xl shadow-2xl border border-slate-300 max-w-[calc(100vw-8rem)] w-full h-[94vh] overflow-hidden flex flex-col z-10 animate-in fade-in zoom-in-95 duration-250"
+            className="relative h-[94vh] w-full max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-slate-300 bg-slate-100 shadow-2xl flex flex-col z-10 animate-in fade-in zoom-in-95 duration-250 sm:max-w-[calc(100vw-4rem)] lg:max-w-[calc(100vw-8rem)]"
             onClick={e => e.stopPropagation()}
           >
             
@@ -1195,108 +1218,194 @@ const handleDownloadSelectedPDF = async () => {
               </div>
               </>
               ) : (
-                <div className="w-full min-h-full font-sans text-slate-800 select-text">
-                  <div className="px-6 py-5 border-b border-slate-100 bg-[#f9fafb]">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Vista rapida de datos</span>
-                        <h4 className="text-lg font-black text-slate-900 mt-1">{selectedDoc.folio || "BORRADOR SIN FOLIO"}</h4>
-                        <p className="text-xs text-slate-500 mt-1">{selectedDoc.concepto}</p>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[10px] font-bold uppercase text-slate-400 block">Total</span>
-                        <span className="text-xl font-black font-mono text-slate-950">
-                          $ {selectedDoc.items.reduce((sum, i) => sum + i.importe, 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                <div className="min-h-full w-full select-text bg-[#F8FAFC] p-4 font-sans text-[#0F172A] lg:p-5">
+                  <div className="space-y-4">
+                    <section className="grid overflow-hidden rounded-2xl border border-[#D8E1EF] bg-white xl:grid-cols-[minmax(0,2fr)_minmax(280px,0.72fr)]">
+                      <div className="p-5 lg:p-6">
+                        <p className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Vista rápida de datos</p>
+                        <h4 className="mt-1.5 text-2xl font-extrabold tracking-tight text-[#061A3D] lg:text-3xl">
+                          {selectedDoc.folio || "BORRADOR SIN FOLIO"}
+                        </h4>
+                        <p className="mt-2 max-w-5xl text-xs font-medium leading-5 text-[#475569] lg:text-sm">
+                          <span className="font-extrabold text-[#0F172A]">CONCEPTO:</span>{" "}
+                          {selectedDoc.concepto?.replace(/^CONCEPTO:\s*/i, "") || "—"}
+                        </p>
 
-                  <div className="p-6 space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Unidad administrativa</span>
-                        <p className="text-sm font-bold text-slate-850">{selectedDoc.unidadNombre}</p>
-                        <p className="text-xs font-mono text-slate-500">{selectedDoc.unidadClave}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Proveedor</span>
-                        <p className="text-sm font-bold text-slate-850">{selectedDoc.proveedorNombre}</p>
-                        <p className="text-xs font-mono text-slate-500">{selectedDoc.proveedorRfc}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Banco</span>
-                        <p className="text-sm font-bold text-slate-850">{selectedDoc.bancoNombre}</p>
-                        <p className="text-xs font-mono text-slate-500">{selectedDoc.bancoCuenta || "-"} / {selectedDoc.bancoClabe || "-"}</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Conceptos e importes</span>
-                        <span className="text-[10px] font-bold text-slate-400">{selectedDoc.items.length} registro(s)</span>
+                        <div className="mt-4 flex flex-wrap gap-2.5">
+                          <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8E1EF] bg-white px-3 py-2 text-xs font-bold text-[#0F172A]">
+                            <CalendarDays className="h-4 w-4 text-[#0B4FE8]" />
+                            {formatPreviewDate(previewDate)}
+                          </span>
+                          <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8E1EF] bg-white px-3 py-2 text-xs font-bold text-[#0F172A]">
+                            <FileText className="h-4 w-4 text-[#0B4FE8]" />
+                            {selectedDoc.items.length} {selectedDoc.items.length === 1 ? "registro" : "registros"}
+                          </span>
+                          {/* <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8E1EF] bg-white px-3 py-2 text-xs font-bold text-[#0F172A]">
+                            <ClipboardCheck className="h-4 w-4 text-[#0B4FE8]" />
+                            O.C. {previewFirstItem?.oc || "—"}
+                          </span> */}
+                          {/* <span className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold ${
+                            selectedDoc.estado === "finalizado"
+                              ? "border-emerald-200 bg-[#ECFDF5] text-emerald-800"
+                              : "border-amber-200 bg-amber-50 text-amber-800"
+                          }`}>
+                            <CircleCheck className="h-4 w-4" />
+                            {selectedDoc.estado === "finalizado" ? "Sincronizada" : "Borrador"}
+                          </span> */}
+                        </div>
                       </div>
 
-                      <div className="space-y-2">
-                        {selectedDoc.items.map((it, idx) => (
-                          <div key={it.id || idx} className="rounded-lg border border-slate-200 bg-white p-3">
-                            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-sm font-black text-slate-850 uppercase">{it.objetoNombre}</p>
-                                <p className="text-[11px] font-mono text-slate-500 mt-1">
-                                  {it.objetoClave} | Fuente {it.fuenteClave} | Proyecto {it.proyectoClave}
-                                </p>
-                                <p className="text-[11px] text-slate-500 mt-1">
-                                  Factura {it.numFactura || "-"} | {it.fechaFactura ? it.fechaFactura.split("-").reverse().join("/") : "-"}
-                                </p>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <span className="text-[10px] font-bold uppercase text-slate-400 block">Importe</span>
-                                <span className="text-sm font-black font-mono text-slate-950">
-                                  $ {it.importe.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-[11px]">
-                              <div>
-                                <span className="block font-bold uppercase text-slate-400">Subtotal</span>
-                                <span className="font-mono text-slate-700">$ {it.subTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
-                              </div>
-                              <div>
-                                <span className="block font-bold uppercase text-slate-400">IVA</span>
-                                <span className="font-mono text-slate-700">$ {it.iva.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
-                              </div>
-                              <div>
-                                <span className="block font-bold uppercase text-slate-400">Descuento</span>
-                                <span className="font-mono text-slate-700">$ {it.descuento.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
-                              </div>
-                              <div>
-                                <span className="block font-bold uppercase text-slate-400">O.C.</span>
-                                <span className="font-mono text-slate-700">{it.oc || "-"}</span>
-                              </div>
-                            </div>
+                      <div className="border-t border-[#D8E1EF] p-4 xl:border-l xl:border-t-0 xl:p-5">
+                        <div className="flex h-full min-h-32 flex-col items-center justify-center rounded-xl border border-blue-200 bg-[#EFF6FF] px-5 py-6 text-center">
+                          <span className="text-sm font-extrabold uppercase tracking-wide text-[#0B4FE8]">Total</span>
+                          <span className="mt-2 font-mono text-3xl font-extrabold tracking-tight text-[#123DB5] lg:text-4xl">
+                            {formatPreviewCurrency(previewTotal)}
+                          </span>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                      <article className="flex min-h-36 gap-4 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0F9F9A] bg-white p-5">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
+                          <Building2 className="h-6 w-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-extrabold uppercase tracking-wide text-[#0F8F8A]">Unidad administrativa</p>
+                          <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.unidadNombre || "—"}</p>
+                          <p className="mt-1 text-xs font-medium text-[#475569]">Clave {selectedDoc.unidadClave || "—"}</p>
+                        </div>
+                      </article>
+
+                      <article className="flex min-h-36 gap-4 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#7C3AED] bg-white p-5">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
+                          <UserRound className="h-6 w-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-extrabold uppercase tracking-wide text-[#7C3AED]">Proveedor</p>
+                          <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.proveedorNombre || "—"}</p>
+                          <p className="mt-1 text-xs font-medium text-[#475569]">{selectedDoc.proveedorRfc || "—"}</p>
+                        </div>
+                      </article>
+
+                      <article className="flex min-h-36 gap-4 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0B4FE8] bg-white p-5">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
+                          <Landmark className="h-6 w-6" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Datos bancarios</p>
+                          <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.bancoNombre || "—"}</p>
+                          <p className="mt-1 text-xs font-medium text-[#475569]">Cuenta: <span className="font-mono">{selectedDoc.bancoCuenta || "—"}</span></p>
+                          <p className="mt-0.5 break-all text-xs font-medium text-[#475569]">CLABE: <span className="font-mono">{selectedDoc.bancoClabe || "—"}</span></p>
+                        </div>
+                      </article>
+                    </section>
+
+                    <section className="overflow-hidden rounded-xl border border-[#D8E1EF] bg-white">
+                      <div className="flex items-center justify-between gap-4 border-b border-[#D8E1EF] px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#0B4FE8] text-white">
+                            <ShoppingCart className="h-4 w-4" />
+                          </span>
+                          <h5 className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8] sm:text-sm">Conceptos e importes</h5>
+                        </div>
+                        <span className="shrink-0 text-xs font-bold text-[#0B4FE8]">{selectedDoc.items.length} registro(s)</span>
+                      </div>
+
+                      <div className="space-y-3 p-3">
+                        {selectedDoc.items.length === 0 && (
+                          <div className="rounded-lg border border-dashed border-[#D8E1EF] px-4 py-8 text-center text-sm font-medium text-[#475569]">
+                            No hay conceptos registrados.
                           </div>
+                        )}
+                        {selectedDoc.items.map((it, idx) => (
+                          <article key={it.id || idx} className="grid overflow-hidden rounded-xl border border-[#D8E1EF] bg-white xl:grid-cols-[minmax(0,1fr)_minmax(520px,0.82fr)]">
+                            <div className="flex min-w-0 gap-3 p-4">
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[#0B4FE8]">
+                                <ShoppingCart className="h-6 w-6" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-extrabold uppercase leading-5 text-[#0F172A] sm:text-sm">{it.objetoNombre || selectedDoc.concepto || "—"}</p>
+                                <p className="mt-1 break-all text-[11px] font-medium text-[#475569]">
+                                  Factura {it.cfdi?.uuid || it.numFactura || "—"}
+                                  <span className="mx-2 text-slate-300">|</span>
+                                  {formatPreviewDate(it.fechaFactura)}
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">Objeto {it.objetoClave || "—"}</span>
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">Fuente {it.fuenteClave || "—"}</span>
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">Proyecto {it.proyectoClave || "—"}</span>
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">O.C. {it.oc || "—"}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 border-t border-[#D8E1EF] sm:grid-cols-4 xl:border-l xl:border-t-0">
+                              <div className="flex min-h-24 flex-col items-center justify-center border-b border-r border-[#D8E1EF] px-2 py-3 text-center sm:border-b-0">
+                                <span className="text-[10px] font-bold uppercase text-[#475569]">Subtotal</span>
+                                <span className="mt-1 font-mono text-sm font-extrabold text-[#0F172A]">{formatPreviewCurrency(it.subTotal)}</span>
+                              </div>
+                              <div className="flex min-h-24 flex-col items-center justify-center border-b border-[#D8E1EF] px-2 py-3 text-center sm:border-b-0 sm:border-r">
+                                <span className="text-[10px] font-extrabold uppercase text-[#EA580C]">IVA</span>
+                                <span className="mt-1 font-mono text-sm font-extrabold text-[#EA580C]">{formatPreviewCurrency(it.iva)}</span>
+                              </div>
+                              <div className="flex min-h-24 flex-col items-center justify-center border-r border-[#D8E1EF] px-2 py-3 text-center">
+                                <span className="text-[10px] font-bold uppercase text-[#475569]">Descuento</span>
+                                <span className="mt-1 font-mono text-sm font-extrabold text-[#0F172A]">{formatPreviewCurrency(it.descuento)}</span>
+                              </div>
+                              <div className="flex min-h-24 flex-col items-center justify-center bg-[#EFF6FF] px-2 py-3 text-center">
+                                <span className="text-[10px] font-extrabold uppercase text-[#0B4FE8]">Importe</span>
+                                <span className="mt-1 font-mono text-base font-extrabold text-[#0B4FE8]">{formatPreviewCurrency(it.importe)}</span>
+                              </div>
+                            </div>
+                          </article>
                         ))}
                       </div>
-                    </div>
+                    </section>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-100 pt-5">
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Solicita</span>
-                        <p className="text-xs font-bold text-slate-850 mt-1">{selectedDoc.solicitaNombre}</p>
-                        <p className="text-[10px] text-slate-500">{selectedDoc.solicitaPuesto}</p>
+                    <section className="overflow-hidden rounded-xl border border-[#D8E1EF] bg-white">
+                      <div className="flex items-center gap-2 border-b border-[#D8E1EF] px-4 py-3">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#0B4FE8] text-white">
+                          <ShieldCheck className="h-4 w-4" />
+                        </span>
+                        <h5 className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8] sm:text-sm">Autorizaciones</h5>
                       </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Autoriza Finanzas</span>
-                        <p className="text-xs font-bold text-slate-850 mt-1">{selectedDoc.autoriza1Nombre}</p>
-                        <p className="text-[10px] text-slate-500">{selectedDoc.autoriza1Puesto}</p>
+
+                      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
+                        <article className="flex min-h-28 items-center gap-4 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
+                            <PenLine className="h-6 w-6" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-extrabold uppercase text-[#0F8F8A]">Solicita</p>
+                            <p className="mt-1 text-xs font-extrabold leading-5 text-[#0F172A] sm:text-sm">{selectedDoc.solicitaNombre || "—"}</p>
+                            <p className="mt-0.5 text-[10px] font-medium leading-4 text-[#475569]">{selectedDoc.solicitaPuesto || "—"}</p>
+                          </div>
+                        </article>
+
+                        <article className="flex min-h-28 items-center gap-4 rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
+                            <ShieldCheck className="h-6 w-6" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-extrabold uppercase text-[#7C3AED]">Autoriza Finanzas</p>
+                            <p className="mt-1 text-xs font-extrabold leading-5 text-[#0F172A] sm:text-sm">{selectedDoc.autoriza1Nombre || "—"}</p>
+                            <p className="mt-0.5 text-[10px] font-medium leading-4 text-[#475569]">{selectedDoc.autoriza1Puesto || "—"}</p>
+                          </div>
+                        </article>
+
+                        <article className="flex min-h-28 items-center gap-4 rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
+                            <UsersRound className="h-6 w-6" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-extrabold uppercase text-[#0B4FE8]">Autoriza Sindicatura</p>
+                            <p className="mt-1 text-xs font-extrabold leading-5 text-[#0F172A] sm:text-sm">{selectedDoc.autoriza2Nombre || "—"}</p>
+                            <p className="mt-0.5 text-[10px] font-medium leading-4 text-[#475569]">{selectedDoc.autoriza2Puesto || "—"}</p>
+                          </div>
+                        </article>
                       </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">Autoriza Sindicatura</span>
-                        <p className="text-xs font-bold text-slate-850 mt-1">{selectedDoc.autoriza2Nombre}</p>
-                        <p className="text-[10px] text-slate-500">{selectedDoc.autoriza2Puesto}</p>
-                      </div>
-                    </div>
+                    </section>
                   </div>
                 </div>
               )}
