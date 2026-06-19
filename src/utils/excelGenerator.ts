@@ -31,6 +31,8 @@ const TEXT_LINE_HEIGHT_MULTIPLIER = 1.275;
 const TEXT_HEIGHT_PADDING = 2.7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
+const MONEY_COLUMN_WIDTH_PADDING = 1.5;
+const EXCEL_MAX_COLUMN_WIDTH = 255;
 const GENERATED_XLSX_MTIME = new Date(Date.UTC(2026, 0, 1));
 
 let templateBufferPromise: Promise<ArrayBuffer> | null = null;
@@ -327,6 +329,84 @@ function setDateCell(sheetDoc: XMLDocument, address: string, value: string | Dat
     return;
   }
   setNumberCell(sheetDoc, address, Number(serial.toFixed(8)));
+}
+
+function getColumnNumber(column: string) {
+  return column
+    .toUpperCase()
+    .split("")
+    .reduce((number, character) => number * 26 + character.charCodeAt(0) - 64, 0);
+}
+
+function getColumnDefinition(sheetDoc: XMLDocument, column: string) {
+  const columnNumber = getColumnNumber(column);
+  return Array.from(sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "col")).find(columnNode => {
+    const min = Number(columnNode.getAttribute("min") || 0);
+    const max = Number(columnNode.getAttribute("max") || 0);
+    return min <= columnNumber && columnNumber <= max;
+  });
+}
+
+function ensureColumnRangeWidth(sheetDoc: XMLDocument, startColumn: string, endColumn: string, requiredWidth: number) {
+  const startColumnNumber = getColumnNumber(startColumn);
+  const endColumnNumber = getColumnNumber(endColumn);
+  const columnDefinitions: Element[] = [];
+
+  for (let columnNumber = startColumnNumber; columnNumber <= endColumnNumber; columnNumber += 1) {
+    const column = Array.from(sheetDoc.getElementsByTagNameNS(XLSX_MAIN_NS, "col")).find(columnNode => {
+      const min = Number(columnNode.getAttribute("min") || 0);
+      const max = Number(columnNode.getAttribute("max") || 0);
+      return min <= columnNumber && columnNumber <= max;
+    });
+    if (!column || columnDefinitions.includes(column)) continue;
+    columnDefinitions.push(column);
+  }
+
+  if (!columnDefinitions.length) return;
+
+  const currentWidth = columnDefinitions.reduce(
+    (total, column) => total + Number(column.getAttribute("width") || 0),
+    0
+  );
+  if (currentWidth >= requiredWidth) return;
+
+  const lastColumn = getColumnDefinition(sheetDoc, endColumn);
+  if (!lastColumn) return;
+
+  const lastColumnWidth = Number(lastColumn.getAttribute("width") || 0);
+  const adjustedWidth = Math.min(EXCEL_MAX_COLUMN_WIDTH, lastColumnWidth + requiredWidth - currentWidth);
+  lastColumn.setAttribute("width", String(adjustedWidth));
+  lastColumn.setAttribute("customWidth", "1");
+}
+
+function getRequiredMoneyColumnWidth(values: number[]) {
+  const longestDisplayValue = values.reduce((longest, value) => {
+    const roundedValue = roundMoney(value);
+    const amount = Math.abs(roundedValue).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    const displayValue = roundedValue === 0 ? "$ -" : `${roundedValue < 0 ? "-" : ""}$ ${amount}`;
+    return displayValue.length > longest.length ? displayValue : longest;
+  }, "");
+
+  return Math.min(EXCEL_MAX_COLUMN_WIDTH, longestDisplayValue.length + MONEY_COLUMN_WIDTH_PADDING);
+}
+
+// Expands only monetary columns whose generated values would otherwise render as #### in Excel.
+function applyContentAwareMoneyColumnWidths(sheetDoc: XMLDocument, doc: CLCDocument) {
+  const totalImporte = doc.items.reduce((sum, item) => sum + roundMoney(item.importe), 0);
+  const moneyColumns = [
+    { start: "R", end: "R", values: doc.items.map(item => item.subTotal) },
+    { start: "S", end: "T", values: doc.items.map(item => item.descuento) },
+    { start: "U", end: "U", values: doc.items.map(item => item.iva) },
+    { start: "V", end: "V", values: doc.items.map(item => item.isr) },
+    { start: "W", end: "W", values: [...doc.items.map(item => item.importe), totalImporte] }
+  ];
+
+  moneyColumns.forEach(column => {
+    ensureColumnRangeWidth(sheetDoc, column.start, column.end, getRequiredMoneyColumnWidth(column.values));
+  });
 }
 
 function cloneItemRows(sheetDoc: XMLDocument, itemCount: number) {
@@ -980,6 +1060,7 @@ export async function generateExcelBuffer(doc: CLCDocument) {
   fillGeneralData(sheetDoc, doc);
   fillItemRows(sheetDoc, doc, itemCount);
   fillFooterData(sheetDoc, sharedStrings, doc, rowOffset, itemCount);
+  applyContentAwareMoneyColumnWidths(sheetDoc, doc);
   fillDrawingFolio(zip, sheetPath, doc.folio || "BORRADOR");
 
   zip[sheetPath] = strToU8(serializeXml(sheetDoc));
