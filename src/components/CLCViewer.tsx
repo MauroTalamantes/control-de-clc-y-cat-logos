@@ -57,6 +57,32 @@ const formatPreviewDate = (value?: string) => {
   return year && month && day ? `${day}/${month}/${year}` : value;
 };
 
+const copyPreviewValue = async (value?: string) => {
+  if (!value) return false;
+  const copyWithTextArea = () => {
+    const textArea = document.createElement("textarea");
+    textArea.value = value;
+    textArea.style.position = "fixed";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.select();
+    const copied = document.execCommand("copy");
+    textArea.remove();
+    return copied;
+  };
+
+  if (!navigator.clipboard?.writeText) {
+    return copyWithTextArea();
+  }
+
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return copyWithTextArea();
+  }
+};
+
 export default function CLCViewer({ 
   documents,
   refreshToken = 0,
@@ -90,7 +116,9 @@ export default function CLCViewer({
   const [isPageRefreshing, setIsPageRefreshing] = useState(false);
   const [hasPageRefreshError, setHasPageRefreshError] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [copyToast, setCopyToast] = useState<string | null>(null);
   const dateFilterRef = useRef<HTMLDivElement>(null);
+  const copyToastTimerRef = useRef<number | null>(null);
   const officialPreviewCacheRef = useRef<Map<string, string>>(new Map());
   const previewPageCacheRef = useRef<Map<string, CLCDocument[]>>(new Map());
   const previewNavigationInFlightRef = useRef(false);
@@ -136,6 +164,20 @@ export default function CLCViewer({
     setSelectedDocId(null);
     setSelectedDoc(null);
     setPreviewGlobalIndex(null);
+  };
+
+  const handleCopyPreviewValue = async (value: string | undefined, label: string) => {
+    const copied = await copyPreviewValue(value);
+    if (!copied) return;
+
+    setCopyToast(`${label} copiado al portapapeles`);
+    if (copyToastTimerRef.current !== null) {
+      window.clearTimeout(copyToastTimerRef.current);
+    }
+    copyToastTimerRef.current = window.setTimeout(() => {
+      setCopyToast(null);
+      copyToastTimerRef.current = null;
+    }, 2200);
   };
 
   const handleDownloadExcel = async (doc: CLCDocument) => {
@@ -205,6 +247,12 @@ export default function CLCViewer({
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => () => {
+    if (copyToastTimerRef.current !== null) {
+      window.clearTimeout(copyToastTimerRef.current);
+    }
   }, []);
 
   const handleSort = (key: SortKey) => {
@@ -1221,23 +1269,23 @@ const handleDownloadSelectedPDF = async () => {
                 <div className="min-h-full w-full select-text bg-[#F8FAFC] p-4 font-sans text-[#0F172A] lg:p-5">
                   <div className="space-y-4">
                     <section className="grid overflow-hidden rounded-2xl border border-[#D8E1EF] bg-white xl:grid-cols-[minmax(0,2fr)_minmax(280px,0.72fr)]">
-                      <div className="p-5 lg:p-6">
-                        <p className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Vista rápida de datos</p>
-                        <h4 className="mt-1.5 text-2xl font-extrabold tracking-tight text-[#061A3D] lg:text-3xl">
+                      <div className="p-4 lg:p-5">
+                        <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#0B4FE8]">Vista rápida de datos</p>
+                        <h4 className="mt-1 text-xl font-extrabold tracking-tight text-[#061A3D] lg:text-2xl">
                           {selectedDoc.folio || "BORRADOR SIN FOLIO"}
                         </h4>
-                        <p className="mt-2 max-w-5xl text-xs font-medium leading-5 text-[#475569] lg:text-sm">
+                        <p className="mt-1.5 max-w-5xl text-[11px] font-medium leading-4 text-[#475569] lg:text-xs">
                           <span className="font-extrabold text-[#0F172A]">CONCEPTO:</span>{" "}
                           {selectedDoc.concepto?.replace(/^CONCEPTO:\s*/i, "") || "—"}
                         </p>
 
-                        <div className="mt-4 flex flex-wrap gap-2.5">
-                          <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8E1EF] bg-white px-3 py-2 text-xs font-bold text-[#0F172A]">
-                            <CalendarDays className="h-4 w-4 text-[#0B4FE8]" />
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8E1EF] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#0F172A]">
+                            <CalendarDays className="h-3.5 w-3.5 text-[#0B4FE8]" />
                             {formatPreviewDate(previewDate)}
                           </span>
-                          <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8E1EF] bg-white px-3 py-2 text-xs font-bold text-[#0F172A]">
-                            <FileText className="h-4 w-4 text-[#0B4FE8]" />
+                          <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8E1EF] bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#0F172A]">
+                            <FileText className="h-3.5 w-3.5 text-[#0B4FE8]" />
                             {selectedDoc.items.length} {selectedDoc.items.length === 1 ? "registro" : "registros"}
                           </span>
                           {/* <span className="inline-flex items-center gap-2 rounded-lg border border-[#D8E1EF] bg-white px-3 py-2 text-xs font-bold text-[#0F172A]">
@@ -1255,68 +1303,83 @@ const handleDownloadSelectedPDF = async () => {
                         </div>
                       </div>
 
-                      <div className="border-t border-[#D8E1EF] p-4 xl:border-l xl:border-t-0 xl:p-5">
-                        <div className="flex h-full min-h-32 flex-col items-center justify-center rounded-xl border border-blue-200 bg-[#EFF6FF] px-5 py-6 text-center">
-                          <span className="text-sm font-extrabold uppercase tracking-wide text-[#0B4FE8]">Total</span>
-                          <span className="mt-2 font-mono text-3xl font-extrabold tracking-tight text-[#123DB5] lg:text-4xl">
+                      <div className="border-t border-[#D8E1EF] p-3 xl:border-l xl:border-t-0 xl:p-4">
+                        <div className="flex h-full min-h-28 flex-col items-center justify-center rounded-xl border border-blue-200 bg-[#EFF6FF] px-4 py-4 text-center">
+                          <span className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Total</span>
+                          <span className="mt-1.5 font-mono text-2xl font-extrabold tracking-tight text-[#123DB5] lg:text-3xl">
                             {formatPreviewCurrency(previewTotal)}
                           </span>
                         </div>
                       </div>
                     </section>
 
-                    <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                      <article className="flex min-h-36 gap-4 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0F9F9A] bg-white p-5">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
-                          <Building2 className="h-6 w-6" />
+                    <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                      <article className="flex min-h-32 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0F9F9A] bg-white p-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
+                          <Building2 className="h-5 w-5" />
                         </div>
                         <div className="flex min-w-0 flex-1 flex-col">
-                          <p className="text-xs font-extrabold uppercase tracking-wide text-[#0F8F8A]">Unidad administrativa</p>
-                          <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.unidadNombre || "—"}</p>
-                          <div className="mt-auto flex items-center gap-2 pt-3">
+                          <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#0F8F8A]">Unidad administrativa</p>
+                          <p className="mt-1.5 text-xs font-extrabold leading-4 text-[#0F172A] lg:text-sm">{selectedDoc.unidadNombre || "—"}</p>
+                          <div className="mt-auto flex items-center gap-1.5 pt-2">
                             <span className="text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Clave</span>
-                            <span className="rounded bg-teal-50 px-2.5 py-1 font-mono text-[11px] font-extrabold text-[#0F766E]">
+                            <span className="rounded bg-teal-50 px-2 py-0.5 font-mono text-[11px] font-extrabold tracking-wide text-[#0F766E]">
                               {selectedDoc.unidadClave || "—"}
                             </span>
                           </div>
                         </div>
                       </article>
 
-                      <article className="flex min-h-36 gap-4 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#7C3AED] bg-white p-5">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
-                          <UserRound className="h-6 w-6" />
+                      <article className="flex min-h-32 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#7C3AED] bg-white p-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
+                          <UserRound className="h-5 w-5" />
                         </div>
                         <div className="flex min-w-0 flex-1 flex-col">
-                          <p className="text-xs font-extrabold uppercase tracking-wide text-[#7C3AED]">Proveedor</p>
-                          <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.proveedorNombre || "—"}</p>
-                          <div className="mt-auto flex items-center gap-2 pt-3">
+                          <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#7C3AED]">Proveedor</p>
+                          <p className="mt-1.5 text-xs font-extrabold leading-4 text-[#0F172A] lg:text-sm">{selectedDoc.proveedorNombre || "—"}</p>
+                          <div className="mt-auto flex items-center gap-1.5 pt-2">
                             <span className="text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">R.F.C.</span>
-                            <span className="rounded bg-violet-50 px-2.5 py-1 font-mono text-[11px] font-extrabold text-[#6D28D9]">
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyPreviewValue(selectedDoc.proveedorRfc, "R.F.C.")}
+                              className="cursor-pointer rounded bg-violet-50 px-2 py-0.5 font-mono text-[11px] font-extrabold tracking-wide text-[#6D28D9]"
+                              title="Clic para copiar R.F.C."
+                            >
                               {selectedDoc.proveedorRfc || "—"}
-                            </span>
+                            </button>
                           </div>
                         </div>
                       </article>
 
-                      <article className="flex min-h-36 gap-4 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0B4FE8] bg-white p-5">
-                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
-                          <Landmark className="h-6 w-6" />
+                      <article className="flex min-h-32 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0B4FE8] bg-white p-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
+                          <Landmark className="h-5 w-5" />
                         </div>
                         <div className="flex min-w-0 flex-1 flex-col">
-                          <p className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Datos bancarios</p>
-                          <p className="mt-2 text-sm font-extrabold leading-5 text-[#0F172A] lg:text-base">{selectedDoc.bancoNombre || "—"}</p>
-                          <div className="mt-auto grid gap-2 pt-3 2xl:grid-cols-[minmax(90px,0.7fr)_minmax(150px,1.3fr)] 2xl:gap-3">
+                          <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#0B4FE8]">Datos bancarios</p>
+                          <p className="mt-1.5 text-xs font-extrabold leading-4 text-[#0F172A] lg:text-sm">{selectedDoc.bancoNombre || "—"}</p>
+                          <div className="mt-auto grid gap-1.5 pt-2 2xl:grid-cols-[minmax(90px,0.7fr)_minmax(150px,1.3fr)] 2xl:gap-3">
                             <div className="min-w-0">
                               <span className="block text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Cuenta</span>
-                              <span className="mt-1 inline-block max-w-full rounded bg-blue-50 px-2 py-1 font-mono text-[10px] font-extrabold text-[#1D4ED8]">
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyPreviewValue(selectedDoc.bancoCuenta, "Cuenta")}
+                                className="mt-0.5 inline-block max-w-full cursor-pointer rounded bg-blue-50 px-2 py-0.5 font-mono text-[11px] font-extrabold tracking-wide text-[#1D4ED8]"
+                                title="Clic para copiar cuenta"
+                              >
                                 {selectedDoc.bancoCuenta || "—"}
-                              </span>
+                              </button>
                             </div>
                             <div className="min-w-0 2xl:border-l 2xl:border-[#D8E1EF] 2xl:pl-3">
                               <span className="block text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">CLABE</span>
-                              <span className="mt-1 inline-block max-w-full break-all rounded bg-blue-50 px-2 py-1 font-mono text-[10px] font-extrabold text-[#1D4ED8]">
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyPreviewValue(selectedDoc.bancoClabe, "CLABE")}
+                                className="mt-0.5 inline-block max-w-full cursor-pointer break-all rounded bg-blue-50 px-2 py-0.5 font-mono text-[11px] font-extrabold tracking-wide text-[#1D4ED8]"
+                                title="Clic para copiar CLABE"
+                              >
                                 {selectedDoc.bancoClabe || "—"}
-                              </span>
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -1324,7 +1387,7 @@ const handleDownloadSelectedPDF = async () => {
                     </section>
 
                     <section className="overflow-hidden rounded-xl border border-[#D8E1EF] bg-white">
-                      <div className="flex items-center justify-between gap-4 border-b border-[#D8E1EF] px-4 py-3">
+                      <div className="flex items-center justify-between gap-4 border-b border-[#D8E1EF] px-4 py-2.5">
                         <div className="flex items-center gap-2">
                           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#0B4FE8] text-white">
                             <ShoppingCart className="h-4 w-4" />
@@ -1334,50 +1397,61 @@ const handleDownloadSelectedPDF = async () => {
                         <span className="shrink-0 text-xs font-bold text-[#0B4FE8]">{selectedDoc.items.length} registro(s)</span>
                       </div>
 
-                      <div className="space-y-3 p-3">
+                      <div className="space-y-2 p-2.5">
                         {selectedDoc.items.length === 0 && (
                           <div className="rounded-lg border border-dashed border-[#D8E1EF] px-4 py-8 text-center text-sm font-medium text-[#475569]">
                             No hay conceptos registrados.
                           </div>
                         )}
                         {selectedDoc.items.map((it, idx) => (
-                          <article key={it.id || idx} className="grid overflow-hidden rounded-xl border border-[#D8E1EF] bg-white xl:grid-cols-[minmax(0,1fr)_minmax(520px,0.82fr)]">
-                            <div className="flex min-w-0 gap-3 p-4">
-                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[#0B4FE8]">
-                                <ShoppingCart className="h-6 w-6" />
-                              </div>
+                          <article key={it.id || idx} className="grid overflow-hidden rounded-xl border border-l-4 border-[#D8E1EF] border-l-[#0B4FE8] bg-white xl:grid-cols-[minmax(0,1fr)_minmax(520px,0.82fr)]">
+                            <div className="min-w-0 p-3">
                               <div className="min-w-0">
-                                <p className="text-xs font-extrabold uppercase leading-5 text-[#0F172A] sm:text-sm">{it.objetoNombre || selectedDoc.concepto || "—"}</p>
-                                <p className="mt-1 break-all text-[11px] font-medium text-[#475569]">
-                                  Factura {it.cfdi?.uuid || it.numFactura || "—"}
-                                  <span className="mx-2 text-slate-300">|</span>
-                                  {formatPreviewDate(it.fechaFactura)}
-                                </p>
-                                <div className="mt-3 flex flex-wrap gap-2">
-                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">Objeto {it.objetoClave || "—"}</span>
-                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">Fuente {it.fuenteClave || "—"}</span>
-                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">Proyecto {it.proyectoClave || "—"}</span>
-                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-1 text-[10px] font-bold text-[#475569]">O.C. {it.oc || "—"}</span>
+                                <p className="text-xs font-extrabold uppercase leading-4 text-[#0F172A] sm:text-sm">{it.objetoNombre || selectedDoc.concepto || "—"}</p>
+                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                  <div className="flex min-w-0 items-center gap-1.5">
+                                    <span className="shrink-0 text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Factura</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleCopyPreviewValue(it.cfdi?.uuid || it.numFactura, "Factura")}
+                                      className="cursor-pointer break-all rounded bg-blue-50 px-2 py-0.5 font-mono text-[10px] font-extrabold text-[#1D4ED8]"
+                                      title="Clic para copiar factura"
+                                    >
+                                      {it.cfdi?.uuid || it.numFactura || "—"}
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Fecha</span>
+                                    <span className="rounded bg-blue-50 px-2 py-0.5 font-mono text-[10px] font-extrabold text-[#1D4ED8]">
+                                      {formatPreviewDate(it.fechaFactura)}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-0.5 text-[10px] font-bold text-[#475569]">Objeto {it.objetoClave || "—"}</span>
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-0.5 text-[10px] font-bold text-[#475569]">Fuente {it.fuenteClave || "—"}</span>
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-0.5 text-[10px] font-bold text-[#475569]">Proyecto {it.proyectoClave || "—"}</span>
+                                  <span className="rounded-md border border-[#D8E1EF] bg-[#F8FAFC] px-2 py-0.5 text-[10px] font-bold text-[#475569]">O.C. {it.oc || "—"}</span>
                                 </div>
                               </div>
                             </div>
 
                             <div className="grid grid-cols-2 border-t border-[#D8E1EF] sm:grid-cols-4 xl:border-l xl:border-t-0">
-                              <div className="flex min-h-24 flex-col items-center justify-center border-b border-r border-[#D8E1EF] px-2 py-3 text-center sm:border-b-0">
+                              <div className="flex min-h-20 flex-col items-center justify-center border-b border-r border-[#D8E1EF] px-2 py-2 text-center sm:border-b-0">
                                 <span className="text-[10px] font-bold uppercase text-[#475569]">Subtotal</span>
-                                <span className="mt-1 font-mono text-sm font-extrabold text-[#0F172A]">{formatPreviewCurrency(it.subTotal)}</span>
+                                <span className="mt-0.5 font-mono text-sm font-extrabold text-[#0F172A]">{formatPreviewCurrency(it.subTotal)}</span>
                               </div>
-                              <div className="flex min-h-24 flex-col items-center justify-center border-b border-[#D8E1EF] px-2 py-3 text-center sm:border-b-0 sm:border-r">
+                              <div className="flex min-h-20 flex-col items-center justify-center border-b border-[#D8E1EF] px-2 py-2 text-center sm:border-b-0 sm:border-r">
                                 <span className="text-[10px] font-extrabold uppercase text-[#EA580C]">IVA</span>
-                                <span className="mt-1 font-mono text-sm font-extrabold text-[#EA580C]">{formatPreviewCurrency(it.iva)}</span>
+                                <span className="mt-0.5 font-mono text-sm font-extrabold text-[#EA580C]">{formatPreviewCurrency(it.iva)}</span>
                               </div>
-                              <div className="flex min-h-24 flex-col items-center justify-center border-r border-[#D8E1EF] px-2 py-3 text-center">
+                              <div className="flex min-h-20 flex-col items-center justify-center border-r border-[#D8E1EF] px-2 py-2 text-center">
                                 <span className="text-[10px] font-bold uppercase text-[#475569]">Descuento</span>
-                                <span className="mt-1 font-mono text-sm font-extrabold text-[#0F172A]">{formatPreviewCurrency(it.descuento)}</span>
+                                <span className="mt-0.5 font-mono text-sm font-extrabold text-[#0F172A]">{formatPreviewCurrency(it.descuento)}</span>
                               </div>
-                              <div className="flex min-h-24 flex-col items-center justify-center bg-[#EFF6FF] px-2 py-3 text-center">
+                              <div className="flex min-h-20 flex-col items-center justify-center bg-[#EFF6FF] px-2 py-2 text-center">
                                 <span className="text-[10px] font-extrabold uppercase text-[#0B4FE8]">Importe</span>
-                                <span className="mt-1 font-mono text-base font-extrabold text-[#0B4FE8]">{formatPreviewCurrency(it.importe)}</span>
+                                <span className="mt-0.5 font-mono text-base font-extrabold text-[#0B4FE8]">{formatPreviewCurrency(it.importe)}</span>
                               </div>
                             </div>
                           </article>
@@ -1466,6 +1540,23 @@ const handleDownloadSelectedPDF = async () => {
             </>
           )}
         </div>
+      )}
+
+      {copyToast && createPortal(
+        <div
+          className="pointer-events-none fixed bottom-5 left-1/2 z-[110] flex -translate-x-1/2 items-center gap-3 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-slate-800 shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+            <CircleCheck className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-xs font-extrabold text-emerald-800">Copiado</p>
+            <p className="text-[11px] font-medium text-slate-600">{copyToast}</p>
+          </div>
+        </div>,
+        document.body
       )}
 
       {activeTooltip && createPortal(
