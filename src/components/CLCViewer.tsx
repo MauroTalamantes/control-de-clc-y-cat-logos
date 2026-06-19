@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { CLCDocument } from "../types";
 import { listDocuments } from "../utils/appStore";
@@ -17,7 +17,9 @@ import {
   Eye, 
   X,
   Printer,
-  Loader2
+  Loader2,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 
 interface CLCViewerProps {
@@ -34,6 +36,7 @@ type SortDirection = "asc" | "desc";
 type TooltipState = { text: string; left: number; top: number } | null;
 type ExportAction = { docId: string; type: "excel" | "pdf" } | null;
 const MAX_OFFICIAL_PREVIEW_URLS = 4;
+const MAX_PREVIEW_PAGE_CACHE_ENTRIES = 5;
 
 export default function CLCViewer({ 
   documents,
@@ -44,6 +47,9 @@ export default function CLCViewer({
   onDelete
 }: CLCViewerProps) {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [selectedDoc, setSelectedDoc] = useState<CLCDocument | null>(null);
+  const [previewGlobalIndex, setPreviewGlobalIndex] = useState<number | null>(null);
+  const [isPreviewNavigating, setIsPreviewNavigating] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -67,12 +73,50 @@ export default function CLCViewer({
   const [listError, setListError] = useState<string | null>(null);
   const dateFilterRef = useRef<HTMLDivElement>(null);
   const officialPreviewCacheRef = useRef<Map<string, string>>(new Map());
+  const previewPageCacheRef = useRef<Map<string, CLCDocument[]>>(new Map());
+  const previewNavigationInFlightRef = useRef(false);
+  const previewSessionRef = useRef(0);
   const hasLoadedPageRef = useRef(false);
   const documentsVersion = `${documents.length}:${refreshToken}`;
+  const previewQueryKey = useMemo(() => JSON.stringify({
+    pageSize,
+    searchTerm,
+    dateFrom,
+    dateTo,
+    sortKey,
+    sortDirection,
+    documentsVersion
+  }), [pageSize, searchTerm, dateFrom, dateTo, sortKey, sortDirection, documentsVersion]);
+
+  const storePreviewPage = useCallback((queryKey: string, page: number, pageDocs: CLCDocument[]) => {
+    const cacheKey = `${queryKey}:${page}`;
+    previewPageCacheRef.current.delete(cacheKey);
+    previewPageCacheRef.current.set(cacheKey, pageDocs);
+
+    while (previewPageCacheRef.current.size > MAX_PREVIEW_PAGE_CACHE_ENTRIES) {
+      const oldestKey = previewPageCacheRef.current.keys().next().value;
+      if (oldestKey === undefined) break;
+      previewPageCacheRef.current.delete(oldestKey);
+    }
+  }, []);
 
   const openPreview = (docId: string) => {
+    const docIndex = pageDocuments.findIndex(doc => doc.id === docId);
+    if (docIndex === -1) return;
+
+    previewSessionRef.current += 1;
+    storePreviewPage(previewQueryKey, currentPage, pageDocuments);
     setPreviewMode("datos");
     setSelectedDocId(docId);
+    setSelectedDoc(pageDocuments[docIndex]);
+    setPreviewGlobalIndex((currentPage - 1) * pageSize + docIndex);
+  };
+
+  const closePreview = () => {
+    previewSessionRef.current += 1;
+    setSelectedDocId(null);
+    setSelectedDoc(null);
+    setPreviewGlobalIndex(null);
   };
 
   const handleDownloadExcel = async (doc: CLCDocument) => {
@@ -180,6 +224,7 @@ export default function CLCViewer({
       .then(result => {
         if (!isActive) return;
         hasLoadedPageRef.current = true;
+        storePreviewPage(previewQueryKey, currentPage, result.documents);
         setHasPageRefreshError(false);
         setPageDocuments(result.documents);
         setTotalDocuments(result.total);
@@ -222,7 +267,9 @@ export default function CLCViewer({
     dateTo,
     sortKey,
     sortDirection,
-    documentsVersion
+    documentsVersion,
+    previewQueryKey,
+    storePreviewPage
   ]);
 
   useEffect(() => {
@@ -263,9 +310,104 @@ const handleDownloadSelectedPDF = async () => {
   const firstVisible = totalDocuments === 0 ? 0 : pageStart + 1;
   const lastVisible = Math.min(pageStart + pageDocuments.length, totalDocuments);
 
-  const getDocById = (id: string) => pageDocuments.find(d => d.id === id);
-  const selectedDoc = selectedDocId ? getDocById(selectedDocId) : null;
   const selectedDocPreviewKey = useMemo(() => selectedDoc ? JSON.stringify(selectedDoc) : "", [selectedDoc]);
+  const canNavigatePreviewBack = previewGlobalIndex !== null && previewGlobalIndex > 0;
+  const canNavigatePreviewForward = previewGlobalIndex !== null && previewGlobalIndex < totalDocuments - 1;
+
+  const navigatePreview = useCallback(async (direction: -1 | 1) => {
+    if (
+      !selectedDocId ||
+      previewGlobalIndex === null ||
+      previewNavigationInFlightRef.current
+    ) return;
+
+    const targetGlobalIndex = previewGlobalIndex + direction;
+    if (targetGlobalIndex < 0 || targetGlobalIndex >= totalDocuments) return;
+    const navigationSession = previewSessionRef.current;
+
+    const targetPage = Math.floor(targetGlobalIndex / pageSize) + 1;
+    const targetIndexInPage = targetGlobalIndex % pageSize;
+    const targetCacheKey = `${previewQueryKey}:${targetPage}`;
+    let targetDocuments = targetPage === currentPage
+      ? pageDocuments
+      : previewPageCacheRef.current.get(targetCacheKey);
+
+    if (!targetDocuments) {
+      previewNavigationInFlightRef.current = true;
+      setIsPreviewNavigating(true);
+      try {
+        const result = await listDocuments({
+          page: targetPage,
+          pageSize,
+          search: searchTerm,
+          dateFrom,
+          dateTo,
+          sortKey,
+          sortDirection
+        });
+        targetDocuments = result.documents;
+        storePreviewPage(previewQueryKey, targetPage, result.documents);
+      } catch (error) {
+        console.error("Error loading preview navigation page", error);
+        return;
+      } finally {
+        previewNavigationInFlightRef.current = false;
+        setIsPreviewNavigating(false);
+      }
+    } else {
+      storePreviewPage(previewQueryKey, targetPage, targetDocuments);
+    }
+
+    if (previewSessionRef.current !== navigationSession) return;
+
+    const targetDocument = targetDocuments[targetIndexInPage];
+    if (!targetDocument) return;
+
+    setSelectedDocId(targetDocument.id);
+    setSelectedDoc(targetDocument);
+    setPreviewGlobalIndex(targetGlobalIndex);
+  }, [
+    selectedDocId,
+    previewGlobalIndex,
+    totalDocuments,
+    pageSize,
+    previewQueryKey,
+    currentPage,
+    pageDocuments,
+    searchTerm,
+    dateFrom,
+    dateTo,
+    sortKey,
+    sortDirection,
+    storePreviewPage
+  ]);
+
+  useEffect(() => {
+    if (!selectedDoc) return;
+
+    const handlePreviewKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+      if (event.key === "ArrowLeft" && canNavigatePreviewBack && !isPreviewNavigating) {
+        event.preventDefault();
+        void navigatePreview(-1);
+      }
+
+      if (event.key === "ArrowRight" && canNavigatePreviewForward && !isPreviewNavigating) {
+        event.preventDefault();
+        void navigatePreview(1);
+      }
+    };
+
+    window.addEventListener("keydown", handlePreviewKeyDown);
+    return () => window.removeEventListener("keydown", handlePreviewKeyDown);
+  }, [
+    selectedDoc,
+    canNavigatePreviewBack,
+    canNavigatePreviewForward,
+    isPreviewNavigating,
+    navigatePreview
+  ]);
 
   useEffect(() => {
     return () => {
@@ -767,12 +909,12 @@ const handleDownloadSelectedPDF = async () => {
         <div
           id="print-preview-modal-backdrop"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-hidden bg-slate-900/60 backdrop-blur-xs transition-all"
-          onClick={() => setSelectedDocId(null)}
+          onClick={closePreview}
         >
           
           {/* Modal Container */}
           <div
-            className="relative bg-slate-100 rounded-2xl shadow-2xl border border-slate-300 max-w-[96vw] w-full h-[94vh] overflow-hidden flex flex-col z-10 animate-in fade-in zoom-in-95 duration-250"
+            className="relative bg-slate-100 rounded-2xl shadow-2xl border border-slate-300 max-w-[calc(100vw-8rem)] w-full h-[94vh] overflow-hidden flex flex-col z-10 animate-in fade-in zoom-in-95 duration-250"
             onClick={e => e.stopPropagation()}
           >
             
@@ -830,7 +972,7 @@ const handleDownloadSelectedPDF = async () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedDocId(null)}
+                  onClick={closePreview}
                   className="bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 border border-slate-250 p-2 rounded-lg transition-all cursor-pointer"
                   title="Cerrar vista"
                   aria-label="Cerrar vista"
@@ -1161,6 +1303,37 @@ const handleDownloadSelectedPDF = async () => {
             </div>
 
           </div>
+
+          {totalDocuments > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={event => {
+                  event.stopPropagation();
+                  void navigatePreview(-1);
+                }}
+                disabled={!canNavigatePreviewBack || isPreviewNavigating}
+                className="absolute left-3 top-1/2 z-20 -translate-y-1/2 text-white/80 transition-colors hover:text-white focus-visible:outline-none focus-visible:text-white disabled:cursor-default disabled:text-white/20 cursor-pointer"
+                title="Ver expediente anterior"
+                aria-label="Ver expediente anterior"
+              >
+                <ChevronLeft className="h-8 w-8" />
+              </button>
+              <button
+                type="button"
+                onClick={event => {
+                  event.stopPropagation();
+                  void navigatePreview(1);
+                }}
+                disabled={!canNavigatePreviewForward || isPreviewNavigating}
+                className="absolute right-3 top-1/2 z-20 -translate-y-1/2 text-white/80 transition-colors hover:text-white focus-visible:outline-none focus-visible:text-white disabled:cursor-default disabled:text-white/20 cursor-pointer"
+                title="Ver expediente siguiente"
+                aria-label="Ver expediente siguiente"
+              >
+                <ChevronRight className="h-8 w-8" />
+              </button>
+            </>
+          )}
         </div>
       )}
 
