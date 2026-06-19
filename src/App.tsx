@@ -105,6 +105,11 @@ export default function App() {
   const [catalogSyncStatus, setCatalogSyncStatus] = useState<CatalogSyncStatus>("loading");
   const [catalogSyncError, setCatalogSyncError] = useState<string | null>(null);
   const refreshDocumentList = () => setDocumentListRefreshKey(key => key + 1);
+
+  useEffect(() => {
+    window.clcDiagnostics?.markReady();
+  }, []);
+
   const applyAppMeta = (snapshot: AppMetaResult, options: { updateDocuments?: boolean } = {}) => {
     const updateDocuments = options.updateDocuments ?? snapshot.storageMode !== "supabase";
     setCatalogs(snapshot.catalogs);

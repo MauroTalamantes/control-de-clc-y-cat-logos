@@ -1,0 +1,89 @@
+name: Windows build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate source and version
+        shell: pwsh
+        run: |
+          npm run lint
+          if ("${{ github.ref_type }}" -eq "tag") {
+            npm run release:validate -- --tag "${{ github.ref_name }}"
+          } else {
+            npm run release:validate
+          }
+
+      - name: Build Windows artifacts
+        run: npm run build && npx electron-builder --win nsis portable --publish never
+
+      - name: Validate artifacts
+        run: npm run release:validate -- --artifacts
+
+      - name: Download previous installer when available
+        id: previous
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; "User-Agent" = "control-clc-ci" }
+          $releases = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/${{ github.repository }}/releases?per_page=10"
+          $release = $releases | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -ne "${{ github.ref_name }}" } | Select-Object -First 1
+          $asset = $release.assets | Where-Object { $_.name -match "Control-de-CLC-y-Catalogos-Setup-.*\.exe$" } | Select-Object -First 1
+          if ($asset) {
+            $destination = Join-Path $env:RUNNER_TEMP "previous-setup.exe"
+            Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $destination
+            "path=$destination" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Smoke-test install, upgrade, launch and uninstall
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $setup = "release\Control-de-CLC-y-Catalogos-Setup-$($package.version).exe"
+          & scripts\smoke-installer.ps1 -SetupPath $setup -ExpectedVersion $package.version -PreviousSetupPath "${{ steps.previous.outputs.path }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: control-clc-windows-${{ github.sha }}
+          path: |
+            release/Control-de-CLC-y-Catalogos-Setup-*.exe
+            release/Control-de-CLC-y-Catalogos-Setup-*.exe.blockmap
+            release/Control-de-CLC-y-Catalogos-Portable-*.exe
+            release/latest.yml
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          gh release create "${{ github.ref_name }}" `
+            "release/Control-de-CLC-y-Catalogos-Setup-$($package.version).exe" `
+            "release/Control-de-CLC-y-Catalogos-Setup-$($package.version).exe.blockmap" `
+            "release/Control-de-CLC-y-Catalogos-Portable-$($package.version).exe" `
+            "release/latest.yml" `
+            --title "$($package.version)" --generate-notes

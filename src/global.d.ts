@@ -62,5 +62,10 @@ declare global {
         printed: boolean;
       }>;
     };
+    clcDiagnostics?: {
+      markReady: () => void;
+      reportError: (error: { message: string; stack?: string; source?: string }) => void;
+      openFolder: () => Promise<string>;
+    };
   }
 }

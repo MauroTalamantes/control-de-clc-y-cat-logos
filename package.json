@@ -1,7 +1,7 @@
 {
   "name": "control-de-clc-y-catalogos",
   "private": true,
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Aplicacion de escritorio para control de CLC y catalogos.",
   "author": "Ayuntamiento de Guadalupe",
   "type": "module",
@@ -14,12 +14,14 @@
     "dev": "vite --port=3001 --host=0.0.0.0",
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3001 && electron .\"",
     "build": "vite build",
-    "electron:build": "npm run build && electron-builder",
-    "electron:publish": "npm run build && electron-builder --publish always",
+    "electron:build": "npm run release:validate && npm run build && electron-builder",
+    "electron:publish": "npm run release:validate -- --require-head-tag && npm run build && electron-builder --publish always",
     "dist": "npm run electron:build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "release:validate": "node scripts/validate-release.cjs",
+    "test:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-installer.ps1"
   },
   "build": {
     "appId": "mx.gob.guadalupe.control-clc",
@@ -54,7 +56,14 @@
       ]
     },
     "nsis": {
-      "artifactName": "Control-de-CLC-y-Catalogos-Setup-${version}.${ext}"
+      "artifactName": "Control-de-CLC-y-Catalogos-Setup-${version}.${ext}",
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
     },
     "portable": {
       "artifactName": "Control-de-CLC-y-Catalogos-Portable-${version}.${ext}"
@@ -66,6 +75,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
+    "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "express": "^4.21.2",
     "fflate": "^0.8.3",

@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, crashReporter, session } = require("electron");
 const { autoUpdater } = require("electron-updater");
+const log = require("electron-log/main");
 const { spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -7,6 +8,8 @@ const path = require("node:path");
 
 const AUTO_UPDATE_CHECK_DELAY_MS = 15_000;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const STARTUP_FAILURE_THRESHOLD = 2;
+const STARTUP_STATE_FILE_NAME = "startup-state.json";
 const EXCEL_PDF_CONVERSION_TIMEOUT_MS = 120_000;
 const EXCEL_PDF_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_EXCEL_PDF_CONVERSIONS_PER_WORKER = 100;
@@ -15,10 +18,32 @@ const EXCEL_PDF_WORKER_PATH = app.isPackaged
   : path.join(__dirname, "excel-pdf-worker.ps1");
 const MAX_PDF_CACHE_ENTRIES = 8;
 const MAX_PDF_CACHE_BYTES = 32 * 1024 * 1024;
+const STORE_SCHEMA_VERSION = 1;
 const pdfBufferCache = new Map();
 const pendingPdfConversions = new Map();
 let pdfBufferCacheBytes = 0;
 let excelPdfWorkerState = null;
+let mainWindow = null;
+let autoUpdatesInitialized = false;
+
+log.transports.file.level = "info";
+log.transports.file.maxSize = 5 * 1024 * 1024;
+log.transports.console.level = isRunningSmokeTest() ? "info" : "warn";
+log.initialize({ preload: false });
+log.errorHandler.startCatching({ showDialog: false });
+log.eventLogger.startLogging({ level: "warn" });
+Object.assign(console, log.functions);
+
+try {
+  crashReporter.start({
+    productName: "Control de CLC y Catalogos",
+    companyName: "Ayuntamiento de Guadalupe",
+    uploadToServer: false,
+    compress: true
+  });
+} catch (error) {
+  log.error("Could not initialize the local crash reporter.", error);
+}
 
 // The app is form/report oriented and does not need GPU rendering. Some Windows
 // graphics drivers can leave Chromium's accelerated surface stale until the
@@ -28,10 +53,93 @@ if (process.platform === "win32") {
 }
 
 const isDev = !app.isPackaged;
+const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
+const isSmokeTest = isRunningSmokeTest();
 const appIconPath = path.join(__dirname, "..", "build", process.platform === "win32" ? "icon.ico" : "icon.png");
+const startupStatePath = path.join(app.getPath("userData"), STARTUP_STATE_FILE_NAME);
+const startupState = isSmokeTest ? { consecutiveFailures: 0, pending: false } : beginStartupAttempt();
+const safeMode = process.argv.includes("--safe-mode") || startupState.consecutiveFailures >= STARTUP_FAILURE_THRESHOLD;
 
 if (process.platform === "win32") {
   app.setAppUserModelId("mx.gob.guadalupe.control-clc");
+}
+
+function isRunningSmokeTest() {
+  return process.argv.includes("--smoke-test");
+}
+
+function writeJsonAtomically(filePath, value) {
+  const directory = path.dirname(filePath);
+  fs.mkdirSync(directory, { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  let fileDescriptor;
+  try {
+    fileDescriptor = fs.openSync(tempPath, "w");
+    fs.writeFileSync(fileDescriptor, JSON.stringify(value, null, 2), "utf8");
+    fs.fsyncSync(fileDescriptor);
+    fs.closeSync(fileDescriptor);
+    fileDescriptor = undefined;
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (cleanupError) {
+      if (cleanupError?.code !== "ENOENT") log.warn("Could not remove temporary JSON file.", cleanupError);
+    }
+    throw error;
+  }
+}
+
+function beginStartupAttempt() {
+  let previousState = {};
+  try {
+    previousState = JSON.parse(fs.readFileSync(startupStatePath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") log.warn("Could not read startup state; it will be recreated.", error);
+  }
+
+  const consecutiveFailures = previousState?.pending
+    ? Math.max(0, Number(previousState.consecutiveFailures) || 0) + 1
+    : 0;
+  const nextState = {
+    pending: true,
+    consecutiveFailures,
+    version: app.getVersion(),
+    executablePath: process.execPath,
+    startedAt: new Date().toISOString()
+  };
+
+  try {
+    writeJsonAtomically(startupStatePath, nextState);
+  } catch (error) {
+    log.error("Could not persist startup state.", error);
+  }
+  return nextState;
+}
+
+function markStartupHealthy() {
+  if (isSmokeTest) return;
+  try {
+    writeJsonAtomically(startupStatePath, {
+      pending: false,
+      consecutiveFailures: 0,
+      version: app.getVersion(),
+      executablePath: process.execPath,
+      healthyAt: new Date().toISOString()
+    });
+  } catch (error) {
+    log.error("Could not mark startup as healthy.", error);
+  }
+}
+
+function getDiagnosticsPath() {
+  return path.dirname(log.transports.file.getFile().path);
+}
+
+async function openDiagnosticsFolder() {
+  const errorMessage = await shell.openPath(getDiagnosticsPath());
+  if (errorMessage) throw new Error(errorMessage);
 }
 
 function getDefaultDataPath() {
@@ -66,17 +174,17 @@ function showMessageBoxForWindow(window, options) {
     : dialog.showMessageBox(options);
 }
 
-function setupAutoUpdates(mainWindow) {
-  if (isDev) return;
+function setupAutoUpdates(window) {
+  if (isDev || isPortable || safeMode || isSmokeTest || autoUpdatesInitialized) {
+    log.info("Automatic updates disabled for this run.", { isDev, isPortable, safeMode, isSmokeTest });
+    return;
+  }
+  autoUpdatesInitialized = true;
 
   let updateDialogOpen = false;
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.logger = {
-    info: (...args) => console.info("[auto-update]", ...args),
-    warn: (...args) => console.warn("[auto-update]", ...args),
-    error: (...args) => console.error("[auto-update]", ...args)
-  };
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.logger = log.scope("auto-update");
 
   autoUpdater.on("checking-for-update", () => {
     console.info("[auto-update] Checking for updates.");
@@ -94,7 +202,7 @@ function setupAutoUpdates(mainWindow) {
     if (updateDialogOpen) return;
     updateDialogOpen = true;
     try {
-      const { response } = await showMessageBoxForWindow(mainWindow, {
+      const { response } = await showMessageBoxForWindow(window, {
         type: "info",
         buttons: ["Reiniciar ahora", "Despues"],
         defaultId: 0,
@@ -103,6 +211,8 @@ function setupAutoUpdates(mainWindow) {
         detail: `Se descargo la version ${info?.version || "mas reciente"}. Reinicia la aplicacion para aplicar la actualizacion.`
       });
       if (response === 0) {
+        log.info("User accepted installation of downloaded update.", info?.version || "");
+        await shutdownExcelPdfWorkerAndWait();
         autoUpdater.quitAndInstall(false, true);
       }
     } finally {
@@ -111,7 +221,7 @@ function setupAutoUpdates(mainWindow) {
   });
 
   const checkForUpdates = () => {
-    if (mainWindow.isDestroyed()) return;
+    if (window.isDestroyed()) return;
     autoUpdater.checkForUpdates().catch(error => {
       console.error("[auto-update] Could not check for updates.", error);
     });
@@ -257,6 +367,9 @@ function ensureExcelPdfWorker() {
     state.resolveReady = resolve;
     state.rejectReady = reject;
   });
+  state.exitPromise = new Promise(resolve => {
+    state.resolveExit = resolve;
+  });
   excelPdfWorkerState = state;
 
   workerProcess.stdout.setEncoding("utf8");
@@ -269,6 +382,8 @@ function ensureExcelPdfWorker() {
     failExcelPdfWorker(state, error);
   });
   workerProcess.on("exit", (code, signal) => {
+    state.exited = true;
+    state.resolveExit({ code, signal });
     if (state.shutdownTimer) clearTimeout(state.shutdownTimer);
     if (state.intentionalShutdown) {
       failExcelPdfWorker(state, new Error("El conversor de PDF se cerro."));
@@ -343,6 +458,26 @@ function shutdownExcelPdfWorker(workerState = excelPdfWorkerState) {
   state.shutdownTimer = setTimeout(() => {
     if (!state.process.killed) state.process.kill();
   }, 5_000);
+}
+
+async function shutdownExcelPdfWorkerAndWait() {
+  const state = excelPdfWorkerState;
+  if (!state) return;
+
+  shutdownExcelPdfWorker(state);
+  const exitedGracefully = await Promise.race([
+    state.exitPromise.then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), 5_000))
+  ]);
+
+  if (!exitedGracefully && !state.process.killed) {
+    log.warn("Excel PDF worker did not stop in time; terminating it before update.");
+    state.process.kill();
+    await Promise.race([
+      state.exitPromise,
+      new Promise(resolve => setTimeout(resolve, 1_000))
+    ]);
+  }
 }
 
 async function printPdfWithDefaultApplication(pdfPath) {
@@ -449,12 +584,13 @@ async function removeMarkOfTheWeb(filePath) {
   }
 }
 
-function createInitialData() {
+function createInitialData(filePath = getDefaultDataPath()) {
   return {
+    schemaVersion: STORE_SCHEMA_VERSION,
     catalogs: null,
     documents: [],
     folioCounters: [],
-    dataFilePath: getDefaultDataPath()
+    dataFilePath: filePath
   };
 }
 
@@ -462,7 +598,18 @@ function ensureDataFile(filePath) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, JSON.stringify(createInitialData(), null, 2), "utf8");
+    writeJsonAtomically(filePath, createInitialData(filePath));
+  }
+}
+
+function preserveCorruptStore(filePath, error) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const corruptPath = `${filePath}.corrupt-${timestamp}`;
+  try {
+    fs.copyFileSync(filePath, corruptPath, fs.constants.COPYFILE_EXCL);
+    log.error("Local data file is invalid. A recovery copy was created.", { filePath, corruptPath, error });
+  } catch (copyError) {
+    log.error("Local data file is invalid and could not be backed up.", { filePath, error, copyError });
   }
 }
 
@@ -470,28 +617,40 @@ function readStore(filePath = getDefaultDataPath()) {
   ensureDataFile(filePath);
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new TypeError("El archivo de datos no contiene un objeto valido.");
+    }
     return {
       catalogs: parsed.catalogs ?? null,
       documents: Array.isArray(parsed.documents) ? parsed.documents : [],
       folioCounters: Array.isArray(parsed.folioCounters) ? parsed.folioCounters : [],
       dataFilePath: filePath
     };
-  } catch {
-    return { ...createInitialData(), dataFilePath: filePath };
+  } catch (error) {
+    preserveCorruptStore(filePath, error);
+    throw new Error(`No se pudo leer el archivo local de datos. Se conservo una copia para recuperacion: ${filePath}`, {
+      cause: error
+    });
   }
 }
 
 function writeStore(nextStore, filePath = getDefaultDataPath()) {
   const normalized = {
+    schemaVersion: STORE_SCHEMA_VERSION,
     catalogs: nextStore.catalogs ?? null,
     documents: Array.isArray(nextStore.documents) ? nextStore.documents : [],
     folioCounters: Array.isArray(nextStore.folioCounters) ? nextStore.folioCounters : [],
     dataFilePath: filePath
   };
   ensureDataFile(filePath);
-  const tempPath = `${filePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(normalized, null, 2), "utf8");
-  fs.renameSync(tempPath, filePath);
+  const backupPath = `${filePath}.bak`;
+  try {
+    fs.copyFileSync(filePath, backupPath);
+    writeJsonAtomically(filePath, normalized);
+  } catch (error) {
+    log.error("Could not write local data store.", { filePath, backupPath, error });
+    throw error;
+  }
   return normalized;
 }
 
@@ -529,8 +688,75 @@ function assignFolio(docToFinalize, allDocuments, folioCounters) {
   return { finalizedDoc, updatedDocuments, folioCounters: updatedFolioCounters };
 }
 
+async function runSmokeTest() {
+  const expectedVersionArgument = process.argv.find(argument => argument.startsWith("--expected-version="));
+  const expectedVersion = expectedVersionArgument?.slice("--expected-version=".length);
+  const requiredFiles = [
+    path.join(__dirname, "preload.cjs"),
+    EXCEL_PDF_WORKER_PATH,
+    path.join(__dirname, "..", "dist", "index.html")
+  ];
+
+  if (expectedVersion && app.getVersion() !== expectedVersion) {
+    throw new Error(`Expected version ${expectedVersion}, but the packaged app reports ${app.getVersion()}.`);
+  }
+  for (const requiredFile of requiredFiles) {
+    if (!fs.existsSync(requiredFile)) throw new Error(`Required packaged file is missing: ${requiredFile}`);
+  }
+
+  const smokeWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  try {
+    await smokeWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    await new Promise(resolve => setTimeout(resolve, 750));
+    const rendererState = await smokeWindow.webContents.executeJavaScript(`({
+      rootChildren: document.getElementById("root")?.childElementCount || 0,
+      hasErrorBoundary: document.body.innerText.includes("no pudo mostrar la interfaz")
+    })`);
+    if (!rendererState.rootChildren || rendererState.hasErrorBoundary) {
+      throw new Error(`Renderer smoke test failed: ${JSON.stringify(rendererState)}`);
+    }
+  } finally {
+    if (!smokeWindow.isDestroyed()) smokeWindow.destroy();
+  }
+  log.info("Packaged application smoke test passed.", { version: app.getVersion(), executablePath: process.execPath });
+}
+
+async function prepareSafeMode() {
+  if (!safeMode) return;
+  log.warn("Starting in safe mode after repeated incomplete startups.", startupState);
+  try {
+    await session.defaultSession.clearCache();
+  } catch (error) {
+    log.warn("Could not clear Chromium cache in safe mode.", error);
+  }
+}
+
+async function showStartupRecoveryDialog() {
+  if (!safeMode || process.argv.includes("--safe-mode")) return true;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Continuar en modo seguro", "Abrir diagnostico y salir", "Salir"],
+    defaultId: 0,
+    cancelId: 2,
+    message: "La aplicacion no completo sus ultimos arranques",
+    detail: "Se desactivaran las actualizaciones durante este arranque y se limpiara la cache. Los datos de CLC no se eliminaran."
+  });
+  if (response === 1) {
+    await openDiagnosticsFolder().catch(error => log.error("Could not open diagnostics folder.", error));
+    return false;
+  }
+  return response === 0;
+}
+
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 900,
     minWidth: 1024,
@@ -546,11 +772,20 @@ function createWindow() {
     }
   });
   mainWindow.removeMenu();
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 
   if (isDev) {
-    mainWindow.loadURL("http://localhost:3001");
+    void mainWindow.loadURL("http://localhost:3001").catch(error => log.error("Could not load development UI.", error));
   } else {
-    mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html")).catch(error => {
+      log.error("Could not load packaged UI.", error);
+      dialog.showErrorBox(
+        "No se pudo abrir Control de CLC",
+        `La interfaz no pudo cargarse. Consulta los diagnosticos en:\n${getDiagnosticsPath()}`
+      );
+    });
   }
 
   mainWindow.on("focus", () => repaintWindow(mainWindow));
@@ -565,16 +800,52 @@ function createWindow() {
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error("The main window renderer process ended.", details);
   });
-  mainWindow.webContents.once("did-finish-load", () => {
-    void ensureExcelPdfWorker().catch(error => {
-      console.warn("Could not warm up Excel PDF worker.", error);
-    });
-  });
 
   setupAutoUpdates(mainWindow);
 }
 
-app.whenReady().then(() => {
+const hasSingleInstanceLock = isSmokeTest || app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  log.info("A second application instance was rejected.");
+  markStartupHealthy();
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!app.isReady()) return;
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+      return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+app.whenReady().then(async () => {
+  if (!(await showStartupRecoveryDialog())) {
+    app.quit();
+    return;
+  }
+  await prepareSafeMode();
+
+  ipcMain.on("clc-diagnostics:renderer-ready", () => {
+    markStartupHealthy();
+  });
+
+  ipcMain.on("clc-diagnostics:renderer-error", (_event, payload) => {
+    log.error("Renderer error reported.", {
+      message: String(payload?.message || "Unknown renderer error"),
+      stack: String(payload?.stack || ""),
+      source: String(payload?.source || "renderer")
+    });
+  });
+
+  ipcMain.handle("clc-diagnostics:open-folder", async () => {
+    await openDiagnosticsFolder();
+    return getDiagnosticsPath();
+  });
+
   ipcMain.on("clc-dialog:alert", (event, message) => {
     showMessageBoxSyncForEvent(event, {
       type: "info",
@@ -726,11 +997,29 @@ app.whenReady().then(() => {
     }
   });
 
+  if (isSmokeTest) {
+    try {
+      await runSmokeTest();
+      app.exit(0);
+    } catch (error) {
+      log.error("Packaged application smoke test failed.", error);
+      app.exit(1);
+    }
+    return;
+  }
+
   createWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch(error => {
+  log.error("Application initialization failed.", error);
+  dialog.showErrorBox(
+    "Control de CLC no pudo iniciar",
+    `Ocurrio un error durante el arranque. Consulta los diagnosticos en:\n${getDiagnosticsPath()}`
+  );
+  app.exit(1);
 });
 
 app.on("window-all-closed", () => {
@@ -740,3 +1029,4 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   shutdownExcelPdfWorker();
 });
+}

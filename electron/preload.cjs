@@ -24,3 +24,13 @@ contextBridge.exposeInMainWorld("clcFile", {
   savePdf: (fileName, bytes, options) => ipcRenderer.invoke("clc-file:save-pdf", { fileName, bytes, ...options }),
   printPdf: bytes => ipcRenderer.invoke("clc-file:print-pdf", { bytes })
 });
+
+contextBridge.exposeInMainWorld("clcDiagnostics", {
+  markReady: () => ipcRenderer.send("clc-diagnostics:renderer-ready"),
+  reportError: error => ipcRenderer.send("clc-diagnostics:renderer-error", {
+    message: String(error?.message || error || "Unknown renderer error"),
+    stack: String(error?.stack || ""),
+    source: String(error?.source || "renderer")
+  }),
+  openFolder: () => ipcRenderer.invoke("clc-diagnostics:open-folder")
+});
