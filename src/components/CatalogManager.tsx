@@ -164,13 +164,13 @@ export default function CatalogManager({
     }
 
     if (!confirm(`¿Estás seguro de que quieres modificar el próximo folio del ejercicio ${folioYear}?`)) return;
-    if (!confirm(`Las próximas CLC comenzarán en CLC-${String(nextNumber).padStart(3, "0")}/${folioYear}. ¿Deseas continuar?`)) return;
+    if (!confirm(`Cuando no queden folios liberados, la numeración nueva continuará en CLC-${String(nextNumber).padStart(3, "0")}/${folioYear}. ¿Deseas continuar?`)) return;
 
     setIsSavingFolio(true);
     try {
       await onSetNextFolioNumber(folioYear, nextNumber);
       setNextFolioNumberInput("");
-      alert(`El próximo folio quedó definido como CLC-${String(nextNumber).padStart(3, "0")}/${folioYear}.`);
+      alert(`La continuación de folios nuevos quedó definida en CLC-${String(nextNumber).padStart(3, "0")}/${folioYear}.`);
     } catch (error) {
       console.error("Error updating folio counter", error);
       alert(error instanceof Error ? error.message : "No se pudo modificar el próximo folio.");
@@ -1511,7 +1511,7 @@ export default function CatalogManager({
               <ShieldAlert className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
               <div className="text-xs text-amber-900 space-y-1">
                 <p className="font-bold">Configuración manual de la numeración CLC</p>
-                <p>Usa esta opción solo cuando necesites definir desde qué número continuará un ejercicio. El sistema nunca permite reutilizar un folio ya asignado.</p>
+                <p>Usa esta opción solo cuando necesites definir desde qué número continuará un ejercicio. Los folios de CLC eliminadas se reutilizan primero para evitar huecos; los folios de registros activos nunca se duplican.</p>
               </div>
             </div>
 
@@ -1526,7 +1526,7 @@ export default function CatalogManager({
               </div>
 
               <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-indigo-500">Próximo folio configurado</span>
+                <span className="block text-[10px] font-bold uppercase tracking-wider text-indigo-500">Continuación de folios nuevos</span>
                 <strong className="block mt-2 text-lg font-black font-mono text-indigo-950">
                   CLC-{String(suggestedNextFolio).padStart(3, "0")}/{folioYear}
                 </strong>
@@ -1541,8 +1541,8 @@ export default function CatalogManager({
 
             <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-slate-850">Definir el próximo folio</h3>
-                <p className="text-[11px] text-slate-500 mt-1">El contador se actualiza automáticamente cada vez que se finaliza una CLC.</p>
+                <h3 className="text-sm font-bold text-slate-850">Definir la continuación de folios nuevos</h3>
+                <p className="text-[11px] text-slate-500 mt-1">Los folios liberados por eliminación tienen prioridad; este contador se usa después.</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
@@ -1561,7 +1561,7 @@ export default function CatalogManager({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Número del próximo folio</label>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Siguiente número nuevo</label>
                   <input
                     type="number"
                     min="1"

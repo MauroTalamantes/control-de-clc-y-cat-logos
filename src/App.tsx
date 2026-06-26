@@ -509,31 +509,44 @@ export default function App() {
   };
 
   // Handle deletion of documents
-  const handleDeleteDocument = (id: string) => {
-    if (confirm("¿Estás completamente seguro de que deseas eliminar este registro de la lista oficial?")) {
-      const updated = documents.filter(d => d.id !== id);
-      setDocuments(updated);
-      deletePersistedDocument(id, updated).then(result => {
-        if (isSupabaseMetaResult(result)) {
-          applyAppMeta(result, { updateDocuments: false });
-        } else {
-          setDocuments(getDocumentsFromPersistResult(result));
+  const handleDeleteDocument = async (id: string, selectedDocument?: CLCDocument) => {
+    const documentToDelete = selectedDocument || documents.find(document => document.id === id);
+    const deletionDetails = documentToDelete?.estado === "finalizado"
+      ? `\n\nEl folio ${documentToDelete.folio} quedará disponible para la próxima CLC del mismo ejercicio. Las facturas quedarán disponibles con aviso de uso anterior.`
+      : "\n\nLas facturas del borrador quedarán disponibles con aviso de uso anterior.";
+    if (!confirm(`¿Estás completamente seguro de que deseas eliminar este registro de la lista oficial?${deletionDetails}`)) {
+      return;
+    }
+
+    const updated = documents.filter(document => document.id !== id);
+    try {
+      const result = await deletePersistedDocument(id, updated);
+      if (isSupabaseMetaResult(result)) {
+        if ("deleted" in result && !result.deleted) {
+          throw new Error("El registro ya no existe o fue eliminado por otro usuario.");
         }
-        refreshDocumentList();
-      }).catch(error => {
-        console.error("Error deleting document", error);
-        alert("No se pudo actualizar la base de datos despues de eliminar.");
-      });
-      
+        applyAppMeta(result, { updateDocuments: false });
+      } else {
+        setDocuments(getDocumentsFromPersistResult(result));
+      }
+      refreshDocumentList();
+
       const logTime = new Date().toLocaleTimeString();
       setSimulationLog(prev => [
         {
           time: logTime,
-          text: "Documento eliminado permanentemente por el usuario.",
+          text: documentToDelete?.folio
+            ? `Documento ${documentToDelete.folio} eliminado; su folio y facturas quedaron disponibles para reutilización.`
+            : "Borrador eliminado; sus facturas quedaron disponibles para reutilización.",
           type: "info"
         },
         ...prev
       ]);
+    } catch (error) {
+      console.error("Error deleting document", error);
+      alert(error instanceof Error
+        ? `No se pudo eliminar el registro.\n${error.message}`
+        : "No se pudo eliminar el registro de la base de datos.");
     }
   };
 

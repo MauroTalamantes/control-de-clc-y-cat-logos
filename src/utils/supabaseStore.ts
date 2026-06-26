@@ -91,6 +91,8 @@ export interface InvoiceUsage {
   clcId: string;
   folio: string;
   partidaId: string;
+  status?: "active" | "deleted";
+  deletedAt?: string;
 }
 
 export const EMPTY_DOCUMENT_METRICS: AppDocumentMetrics = {
@@ -180,6 +182,12 @@ async function callRpc<T>(name: string, args: Record<string, unknown>): Promise<
     if (name === "clc_update_finalized_document" && /schema cache|Could not find the function/i.test(error.message)) {
       throw new Error(
         "Falta instalar la funcion de Supabase para editar CLC finalizadas. Ejecuta supabase/migrations/20260617000000_clc_update_finalized_documents.sql y recarga el schema cache."
+      );
+    }
+
+    if (name === "clc_delete_document" && /Finalized CLC documents cannot be deleted/i.test(error.message)) {
+      throw new Error(
+        "La base de datos aún no tiene habilitada la eliminación segura de CLC finalizadas. Ejecuta la migración supabase/migrations/20260626000000_reuse_deleted_clc_assets.sql."
       );
     }
 

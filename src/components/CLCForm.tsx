@@ -128,6 +128,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const [retireReason, setRetireReason] = useState("");
   const [isRetiringInvoice, setIsRetiringInvoice] = useState(false);
   const [associationNotice, setAssociationNotice] = useState<AssociationNotice | null>(null);
+  const acknowledgedDeletedInvoiceUuidsRef = useRef<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const initializedNewFormRef = useRef(false);
   const initializedEditDocumentIdRef = useRef<string | null>(null);
@@ -768,6 +769,28 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
     return `Esta factura ya está registrada en la CLC ${usage.folio || usage.clcId}. Para reutilizarla primero debe retirarse de la CLC donde fue registrada.`;
   };
 
+  const ensureInvoiceCanBeUsed = async (uuid: string, itemId?: string) => {
+    const usage = await checkInvoiceUsage(uuid, documentToEdit?.id, itemId);
+    if (!usage) return;
+
+    if (usage.status === "deleted") {
+      const normalizedUuid = normalizeUuid(uuid);
+      if (acknowledgedDeletedInvoiceUuidsRef.current.has(normalizedUuid)) return;
+
+      const accepted = window.confirm(
+        `Aviso: esta factura se utilizó anteriormente en una CLC eliminada (${usage.folio || usage.clcId}).\n\n` +
+        "La CLC anterior ya no está activa, por lo que la factura puede reutilizarse. ¿Deseas utilizarla?"
+      );
+      if (!accepted) {
+        throw new Error("Se canceló la reutilización de la factura.");
+      }
+      acknowledgedDeletedInvoiceUuidsRef.current.add(normalizedUuid);
+      return;
+    }
+
+    throw new Error(getInvoiceUsageMessage(usage));
+  };
+
   const createItemFromCfdi = (cfdi: ParsedCfdi, xmlHash: string, baseItem?: CLCItem): CLCItem => ({
     ...(baseItem || createEmptyItem()),
     numFactura: cfdi.uuid.toUpperCase(),
@@ -827,8 +850,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       throw new Error("Esta factura ya está capturada en otra partida de la CLC actual.");
     }
 
-    const usage = await checkInvoiceUsage(cfdi.uuid, documentToEdit?.id, itemId);
-    if (usage) throw new Error(getInvoiceUsageMessage(usage));
+    await ensureInvoiceCanBeUsed(cfdi.uuid, itemId);
     return providerMatch;
   };
 
@@ -896,8 +918,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
           throw new Error("Esta factura ya está capturada en una partida de la CLC actual.");
         }
 
-        const usage = await checkInvoiceUsage(cfdi.uuid, documentToEdit?.id);
-        if (usage) throw new Error(getInvoiceUsageMessage(usage));
+        await ensureInvoiceCanBeUsed(cfdi.uuid);
 
         const xmlHash = await calculateXmlHash(xmlText);
         loadedItems.push(createItemFromCfdi(cfdi, xmlHash));
@@ -1168,11 +1189,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
       }
 
       try {
-        const usage = await checkInvoiceUsage(item.numFactura, documentToEdit?.id, item.id);
-        if (usage) {
-          alert(getInvoiceUsageMessage(usage));
-          return;
-        }
+        await ensureInvoiceCanBeUsed(item.numFactura, item.id);
       } catch (error) {
         alert(error instanceof Error ? error.message : "No se pudo validar si la factura ya está registrada.");
         return;

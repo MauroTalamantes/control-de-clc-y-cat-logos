@@ -38,7 +38,7 @@ interface CLCViewerProps {
   syncStatus?: "connected" | "refreshing" | "error";
   isLoading: boolean;
   onEdit: (doc: CLCDocument) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string, document: CLCDocument) => void;
 }
 
 type SortKey = "fecha" | "folio" | "nombre" | "concepto" | "proveedor";
@@ -906,7 +906,7 @@ const handleDownloadSelectedPDF = async () => {
                             onMouseLeave={() => setActiveTooltip(null)}
                           >
                             <button
-                              onClick={() => onDelete(doc.id)}
+                              onClick={() => onDelete(doc.id, doc)}
                               className="bg-slate-50 hover:bg-rose-600 text-slate-400 hover:text-white p-1.5 rounded-lg transition-all border border-slate-200 hover:border-rose-600 cursor-pointer"
                               aria-label="Eliminar expediente"
                             >
@@ -990,7 +990,7 @@ const handleDownloadSelectedPDF = async () => {
           >
             
             {/* Action Header */}
-            <div className="shrink-0 bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 z-30 shadow-3xs">
+            <div className="shrink-0 bg-white border-b border-slate-200 px-4 py-4 sm:px-5 lg:px-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 z-30 shadow-3xs">
               <div>
                 <span className="text-[9px] font-black uppercase text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full select-none">
                   Vista Previa Oficial Sincronizada
@@ -1000,7 +1000,7 @@ const handleDownloadSelectedPDF = async () => {
                 </h3>
               </div>
               
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:flex-nowrap">
                 <div className="flex border border-slate-200 p-1 rounded-lg bg-slate-100 shrink-0">
                   <button
                     type="button"
@@ -1266,9 +1266,9 @@ const handleDownloadSelectedPDF = async () => {
               </div>
               </>
               ) : (
-                <div className="min-h-full w-full select-text bg-[#F8FAFC] p-4 font-sans text-[#0F172A] lg:p-5">
-                  <div className="space-y-4">
-                    <section className="grid overflow-hidden rounded-2xl border border-[#D8E1EF] bg-white xl:grid-cols-[minmax(0,2fr)_minmax(280px,0.72fr)]">
+                <div className="min-h-full w-full select-text bg-[#F8FAFC] p-2.5 font-sans text-[#0F172A] sm:p-4 lg:p-5">
+                  <div className="space-y-3 sm:space-y-4">
+                    <section className="grid overflow-hidden rounded-2xl border border-[#D8E1EF] bg-white md:grid-cols-[minmax(0,1fr)_minmax(220px,0.42fr)]">
                       <div className="p-4 lg:p-5">
                         <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#0B4FE8]">Vista rápida de datos</p>
                         <h4 className="mt-1 text-xl font-extrabold tracking-tight text-[#061A3D] lg:text-2xl">
@@ -1303,18 +1303,18 @@ const handleDownloadSelectedPDF = async () => {
                         </div>
                       </div>
 
-                      <div className="border-t border-[#D8E1EF] p-3 xl:border-l xl:border-t-0 xl:p-4">
-                        <div className="flex h-full min-h-28 flex-col items-center justify-center rounded-xl border border-blue-200 bg-[#EFF6FF] px-4 py-4 text-center">
+                      <div className="border-t border-[#D8E1EF] p-3 md:border-l md:border-t-0 md:p-4">
+                        <div className="flex h-full min-h-0 flex-row items-center justify-between rounded-xl border border-blue-200 bg-[#EFF6FF] px-4 py-3 text-left md:min-h-24 md:flex-col md:justify-center md:py-4 md:text-center">
                           <span className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8]">Total</span>
-                          <span className="mt-1.5 font-mono text-2xl font-extrabold tracking-tight text-[#123DB5] lg:text-3xl">
+                          <span className="ml-3 font-mono text-2xl font-extrabold tracking-tight text-[#123DB5] md:ml-0 md:mt-1.5 lg:text-3xl">
                             {formatPreviewCurrency(previewTotal)}
                           </span>
                         </div>
                       </div>
                     </section>
 
-                    <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                      <article className="flex min-h-32 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0F9F9A] bg-white p-4">
+                    <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <article className="flex min-h-0 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0F9F9A] bg-white p-4 md:min-h-32">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
                           <Building2 className="h-5 w-5" />
                         </div>
@@ -1330,7 +1330,7 @@ const handleDownloadSelectedPDF = async () => {
                         </div>
                       </article>
 
-                      <article className="flex min-h-32 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#7C3AED] bg-white p-4">
+                      <article className="flex min-h-0 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#7C3AED] bg-white p-4 md:min-h-32">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
                           <UserRound className="h-5 w-5" />
                         </div>
@@ -1351,14 +1351,14 @@ const handleDownloadSelectedPDF = async () => {
                         </div>
                       </article>
 
-                      <article className="flex min-h-32 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0B4FE8] bg-white p-4">
+                      <article className="flex min-h-0 gap-3 rounded-xl border border-[#D8E1EF] border-t-4 border-t-[#0B4FE8] bg-white p-4 md:col-span-2 md:min-h-32 xl:col-span-1">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
                           <Landmark className="h-5 w-5" />
                         </div>
                         <div className="flex min-w-0 flex-1 flex-col">
                           <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#0B4FE8]">Datos bancarios</p>
                           <p className="mt-1.5 text-xs font-extrabold leading-4 text-[#0F172A] lg:text-sm">{selectedDoc.bancoNombre || "—"}</p>
-                          <div className="mt-auto grid gap-1.5 pt-2 2xl:grid-cols-[minmax(90px,0.7fr)_minmax(150px,1.3fr)] 2xl:gap-3">
+                          <div className="mt-auto grid gap-1.5 pt-2 sm:grid-cols-[minmax(90px,0.7fr)_minmax(150px,1.3fr)] sm:gap-3">
                             <div className="min-w-0">
                               <span className="block text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">Cuenta</span>
                               <button
@@ -1370,7 +1370,7 @@ const handleDownloadSelectedPDF = async () => {
                                 {selectedDoc.bancoCuenta || "—"}
                               </button>
                             </div>
-                            <div className="min-w-0 2xl:border-l 2xl:border-[#D8E1EF] 2xl:pl-3">
+                            <div className="min-w-0 sm:border-l sm:border-[#D8E1EF] sm:pl-3">
                               <span className="block text-[9px] font-extrabold uppercase tracking-wide text-[#475569]">CLABE</span>
                               <button
                                 type="button"
@@ -1467,8 +1467,8 @@ const handleDownloadSelectedPDF = async () => {
                         <h5 className="text-xs font-extrabold uppercase tracking-wide text-[#0B4FE8] sm:text-sm">Autorizaciones</h5>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
-                        <article className="flex min-h-28 items-center gap-4 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+                      <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 md:grid-cols-3 sm:p-4">
+                        <article className="flex min-h-0 items-center gap-4 rounded-xl border border-teal-200 bg-teal-50/40 p-4 sm:min-h-28">
                           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0F9F9A] text-white">
                             <PenLine className="h-6 w-6" />
                           </div>
@@ -1479,7 +1479,7 @@ const handleDownloadSelectedPDF = async () => {
                           </div>
                         </article>
 
-                        <article className="flex min-h-28 items-center gap-4 rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+                        <article className="flex min-h-0 items-center gap-4 rounded-xl border border-violet-200 bg-violet-50/40 p-4 sm:min-h-28">
                           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#7C3AED] text-white">
                             <ShieldCheck className="h-6 w-6" />
                           </div>
@@ -1490,7 +1490,7 @@ const handleDownloadSelectedPDF = async () => {
                           </div>
                         </article>
 
-                        <article className="flex min-h-28 items-center gap-4 rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+                        <article className="flex min-h-0 items-center gap-4 rounded-xl border border-blue-200 bg-blue-50/50 p-4 sm:col-span-2 sm:min-h-28 md:col-span-1">
                           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#0B4FE8] text-white">
                             <UsersRound className="h-6 w-6" />
                           </div>

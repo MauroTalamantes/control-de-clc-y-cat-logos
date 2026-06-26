@@ -590,6 +590,8 @@ function createInitialData(filePath = getDefaultDataPath()) {
     catalogs: null,
     documents: [],
     folioCounters: [],
+    reusableFolios: [],
+    deletedInvoiceUsage: [],
     dataFilePath: filePath
   };
 }
@@ -624,6 +626,8 @@ function readStore(filePath = getDefaultDataPath()) {
       catalogs: parsed.catalogs ?? null,
       documents: Array.isArray(parsed.documents) ? parsed.documents : [],
       folioCounters: Array.isArray(parsed.folioCounters) ? parsed.folioCounters : [],
+      reusableFolios: Array.isArray(parsed.reusableFolios) ? parsed.reusableFolios : [],
+      deletedInvoiceUsage: Array.isArray(parsed.deletedInvoiceUsage) ? parsed.deletedInvoiceUsage : [],
       dataFilePath: filePath
     };
   } catch (error) {
@@ -640,6 +644,8 @@ function writeStore(nextStore, filePath = getDefaultDataPath()) {
     catalogs: nextStore.catalogs ?? null,
     documents: Array.isArray(nextStore.documents) ? nextStore.documents : [],
     folioCounters: Array.isArray(nextStore.folioCounters) ? nextStore.folioCounters : [],
+    reusableFolios: Array.isArray(nextStore.reusableFolios) ? nextStore.reusableFolios : [],
+    deletedInvoiceUsage: Array.isArray(nextStore.deletedInvoiceUsage) ? nextStore.deletedInvoiceUsage : [],
     dataFilePath: filePath
   };
   ensureDataFile(filePath);
@@ -666,11 +672,19 @@ function getHighestFolioNumber(allDocuments, year) {
   }, 0);
 }
 
-function assignFolio(docToFinalize, allDocuments, folioCounters) {
+function assignFolio(docToFinalize, allDocuments, folioCounters, reusableFolios) {
   const year = getDocumentYear(docToFinalize);
   const maxNumber = getHighestFolioNumber(allDocuments, year);
   const configuredLastNumber = folioCounters.find(counter => counter.anio === year)?.lastNumber || 0;
-  const nextNumber = Math.max(maxNumber, configuredLastNumber) + 1;
+  const usedNumbers = new Set(
+    allDocuments
+      .filter(doc => getDocumentYear(doc) === year && doc.estado === "finalizado")
+      .map(doc => Number.parseInt(String(doc.folio || "").match(/CLC-(\d+)\/\d+/)?.[1] || "0", 10))
+  );
+  const reusable = reusableFolios
+    .filter(candidate => candidate.anio === year && !usedNumbers.has(candidate.number))
+    .sort((a, b) => a.number - b.number)[0];
+  const nextNumber = reusable?.number ?? Math.max(maxNumber, configuredLastNumber) + 1;
   const assignedFolio = `CLC-${String(nextNumber).padStart(3, "0")}/${year}`;
   const finalizedDoc = {
     ...docToFinalize,
@@ -682,10 +696,21 @@ function assignFolio(docToFinalize, allDocuments, folioCounters) {
   const docIndex = updatedDocuments.findIndex(doc => doc.id === docToFinalize.id);
   if (docIndex >= 0) updatedDocuments[docIndex] = finalizedDoc;
   else updatedDocuments.push(finalizedDoc);
-  const updatedFolioCounters = folioCounters.filter(counter => counter.anio !== year);
-  updatedFolioCounters.push({ anio: year, lastNumber: nextNumber });
-  updatedFolioCounters.sort((a, b) => b.anio - a.anio);
-  return { finalizedDoc, updatedDocuments, folioCounters: updatedFolioCounters };
+  const updatedFolioCounters = reusable
+    ? [...folioCounters]
+    : [
+        ...folioCounters.filter(counter => counter.anio !== year),
+        { anio: year, lastNumber: nextNumber }
+      ].sort((a, b) => b.anio - a.anio);
+  const updatedReusableFolios = reusable
+    ? reusableFolios.filter(candidate => !(candidate.anio === year && candidate.number === reusable.number))
+    : reusableFolios;
+  return {
+    finalizedDoc,
+    updatedDocuments,
+    folioCounters: updatedFolioCounters,
+    reusableFolios: updatedReusableFolios
+  };
 }
 
 async function runSmokeTest() {
@@ -879,14 +904,58 @@ app.whenReady().then(async () => {
     return writeStore({ ...current, documents });
   });
 
+  ipcMain.handle("clc-store:delete-document", (_event, id) => {
+    const current = readStore();
+    const deletedDocument = current.documents.find(document => document.id === id);
+    if (!deletedDocument) return current;
+
+    const deletedAt = new Date().toISOString();
+    const deletedInvoiceUsage = [
+      ...current.deletedInvoiceUsage,
+      ...deletedDocument.items
+        .filter(item => String(item.numFactura || "").trim())
+        .map(item => ({
+          uuid: String(item.numFactura).trim().toLowerCase(),
+          clcId: deletedDocument.id,
+          folio: deletedDocument.folio || "BORRADOR",
+          partidaId: item.id,
+          deletedAt
+        }))
+    ];
+    let reusableFolios = [...current.reusableFolios];
+    const folioMatch = deletedDocument.estado === "finalizado"
+      ? String(deletedDocument.folio || "").match(/^CLC-(\d+)\/(\d{4})$/i)
+      : null;
+    if (folioMatch) {
+      const reusable = {
+        anio: Number.parseInt(folioMatch[2], 10),
+        number: Number.parseInt(folioMatch[1], 10),
+        folio: String(deletedDocument.folio).toUpperCase(),
+        deletedAt
+      };
+      reusableFolios = reusableFolios.filter(candidate => (
+        candidate.anio !== reusable.anio || candidate.number !== reusable.number
+      ));
+      reusableFolios.push(reusable);
+    }
+
+    return writeStore({
+      ...current,
+      documents: current.documents.filter(document => document.id !== id),
+      reusableFolios,
+      deletedInvoiceUsage
+    });
+  });
+
   ipcMain.handle("clc-store:finalize-document", (_event, docToFinalize) => {
     const current = readStore();
-    const { finalizedDoc, updatedDocuments, folioCounters } = assignFolio(
+    const { finalizedDoc, updatedDocuments, folioCounters, reusableFolios } = assignFolio(
       docToFinalize,
       current.documents,
-      current.folioCounters
+      current.folioCounters,
+      current.reusableFolios
     );
-    const store = writeStore({ ...current, documents: updatedDocuments, folioCounters });
+    const store = writeStore({ ...current, documents: updatedDocuments, folioCounters, reusableFolios });
     return { finalizedDoc, documents: store.documents, folioCounters: store.folioCounters };
   });
 

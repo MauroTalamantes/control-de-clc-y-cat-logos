@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AppCatalogs, CLCDocument, FolioCounter } from "../types";
+import { AppCatalogs, CLCDocument, DeletedInvoiceUsage, FolioCounter, ReusableFolio } from "../types";
 
 const FOLIO_COUNTERS_STORAGE_KEY = "clc_folio_counters";
+const REUSABLE_FOLIOS_STORAGE_KEY = "clc_reusable_folios";
+const DELETED_INVOICE_USAGE_STORAGE_KEY = "clc_deleted_invoice_usage";
 
 export const INITIAL_CATALOGS: AppCatalogs = {
   defaultUnidadId: "u1",
@@ -309,6 +311,32 @@ export function saveStoredFolioCounters(counters: FolioCounter[]) {
   localStorage.setItem(FOLIO_COUNTERS_STORAGE_KEY, JSON.stringify(counters));
 }
 
+export function getStoredReusableFolios(): ReusableFolio[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REUSABLE_FOLIOS_STORAGE_KEY) || "[]") as ReusableFolio[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredReusableFolios(folios: ReusableFolio[]) {
+  localStorage.setItem(REUSABLE_FOLIOS_STORAGE_KEY, JSON.stringify(folios));
+}
+
+export function getStoredDeletedInvoiceUsage(): DeletedInvoiceUsage[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DELETED_INVOICE_USAGE_STORAGE_KEY) || "[]") as DeletedInvoiceUsage[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredDeletedInvoiceUsage(history: DeletedInvoiceUsage[]) {
+  localStorage.setItem(DELETED_INVOICE_USAGE_STORAGE_KEY, JSON.stringify(history));
+}
+
 export function setStoredNextFolioNumber(anio: number, nextNumber: number): FolioCounter[] {
   const counters = getStoredFolioCounters();
   const nextCounters = counters.filter(counter => counter.anio !== anio);
@@ -325,8 +353,14 @@ export function setStoredNextFolioNumber(anio: number, nextNumber: number): Foli
 export function finalizeDocumentAndAssignFolio(
   docToFinalize: CLCDocument,
   allDocuments: CLCDocument[],
-  folioCounters: FolioCounter[] = []
-): { finalizedDoc: CLCDocument, updatedGlobalList: CLCDocument[], folioCounters: FolioCounter[] } {
+  folioCounters: FolioCounter[] = [],
+  reusableFolios: ReusableFolio[] = []
+): {
+  finalizedDoc: CLCDocument;
+  updatedGlobalList: CLCDocument[];
+  folioCounters: FolioCounter[];
+  reusableFolios: ReusableFolio[];
+} {
   const year = docToFinalize.año || new Date().getFullYear();
   
   // Filter final documents of same year to count and find highest
@@ -339,7 +373,11 @@ export function finalizeDocumentAndAssignFolio(
   });
   const maxNumber = Math.max(...folioNumbers, 0);
   const configuredLastNumber = folioCounters.find(counter => counter.anio === year)?.lastNumber || 0;
-  const nextNum = Math.max(maxNumber, configuredLastNumber) + 1;
+  const usedNumbers = new Set(folioNumbers);
+  const reusable = reusableFolios
+    .filter(candidate => candidate.anio === year && !usedNumbers.has(candidate.number))
+    .sort((a, b) => a.number - b.number)[0];
+  const nextNum = reusable?.number ?? Math.max(maxNumber, configuredLastNumber) + 1;
   
   // Format to 3 digits e.g. CLC-007/2026
   const paddedNum = String(nextNum).padStart(3, "0");
@@ -361,9 +399,15 @@ export function finalizeDocumentAndAssignFolio(
     updatedGlobalList.push(finalizedDoc);
   }
   
-  const nextCounters = folioCounters.filter(counter => counter.anio !== year);
-  nextCounters.push({ anio: year, lastNumber: nextNum });
-  nextCounters.sort((a, b) => b.anio - a.anio);
+  const nextCounters = reusable
+    ? [...folioCounters]
+    : [
+        ...folioCounters.filter(counter => counter.anio !== year),
+        { anio: year, lastNumber: nextNum }
+      ].sort((a, b) => b.anio - a.anio);
+  const nextReusableFolios = reusable
+    ? reusableFolios.filter(candidate => !(candidate.anio === year && candidate.number === reusable.number))
+    : reusableFolios;
 
-  return { finalizedDoc, updatedGlobalList, folioCounters: nextCounters };
+  return { finalizedDoc, updatedGlobalList, folioCounters: nextCounters, reusableFolios: nextReusableFolios };
 }

@@ -1,14 +1,26 @@
-import { AppCatalogs, AppDocumentMetrics, CLCDocument, FolioCounter, FolioYearSummary } from "../types";
+import {
+  AppCatalogs,
+  AppDocumentMetrics,
+  CLCDocument,
+  DeletedInvoiceUsage,
+  FolioCounter,
+  FolioYearSummary,
+  ReusableFolio
+} from "../types";
 import {
   INITIAL_CATALOGS,
   INITIAL_DOCUMENTS,
   finalizeDocumentAndAssignFolio,
   getStoredCatalogs,
   getStoredDocuments,
+  getStoredDeletedInvoiceUsage,
   getStoredFolioCounters,
+  getStoredReusableFolios,
   saveStoredCatalogs,
+  saveStoredDeletedInvoiceUsage,
   saveStoredDocuments,
   saveStoredFolioCounters,
+  saveStoredReusableFolios,
   setStoredNextFolioNumber,
   normalizeCatalogs
 } from "./initialData";
@@ -314,6 +326,44 @@ export async function deletePersistedDocument(
     return deleteSupabaseDocument(id);
   }
 
+  if (isElectronStoreAvailable() && window.clcStore) {
+    const store = await window.clcStore.deleteDocument(id);
+    return store.documents;
+  }
+
+  const currentDocuments = getStoredDocuments();
+  const deletedDocument = currentDocuments.find(document => document.id === id);
+  if (deletedDocument) {
+    const deletedAt = new Date().toISOString();
+    const history = getStoredDeletedInvoiceUsage();
+    const deletedUsages: DeletedInvoiceUsage[] = deletedDocument.items
+      .filter(item => normalizeInvoiceUuid(item.numFactura))
+      .map(item => ({
+        uuid: normalizeInvoiceUuid(item.numFactura),
+        clcId: deletedDocument.id,
+        folio: deletedDocument.folio || "BORRADOR",
+        partidaId: item.id,
+        deletedAt
+      }));
+    saveStoredDeletedInvoiceUsage([...history, ...deletedUsages]);
+
+    const folioMatch = deletedDocument.estado === "finalizado"
+      ? deletedDocument.folio.match(/^CLC-(\d+)\/(\d{4})$/i)
+      : null;
+    if (folioMatch) {
+      const reusable: ReusableFolio = {
+        anio: Number.parseInt(folioMatch[2], 10),
+        number: Number.parseInt(folioMatch[1], 10),
+        folio: deletedDocument.folio.toUpperCase(),
+        deletedAt
+      };
+      const reusableFolios = getStoredReusableFolios().filter(candidate => (
+        candidate.anio !== reusable.anio || candidate.number !== reusable.number
+      ));
+      saveStoredReusableFolios([...reusableFolios, reusable]);
+    }
+  }
+
   await persistDocuments(optimisticDocuments);
   return optimisticDocuments;
 }
@@ -332,13 +382,15 @@ export async function finalizeAndPersistDocument(
   }
 
   const latestDocuments = getStoredDocuments();
-  const { finalizedDoc, updatedGlobalList, folioCounters } = finalizeDocumentAndAssignFolio(
+  const { finalizedDoc, updatedGlobalList, folioCounters, reusableFolios } = finalizeDocumentAndAssignFolio(
     doc,
     latestDocuments.length ? latestDocuments : currentDocuments,
-    getStoredFolioCounters()
+    getStoredFolioCounters(),
+    getStoredReusableFolios()
   );
   saveStoredDocuments(updatedGlobalList);
   saveStoredFolioCounters(folioCounters);
+  saveStoredReusableFolios(reusableFolios);
   return { finalizedDoc, documents: updatedGlobalList, folioCounters };
 }
 
@@ -390,11 +442,21 @@ async function assertLocalProviderBankRelationship(document: CLCDocument) {
   assertProviderBankRelationship(document, prepareLocalCatalogs(getStoredCatalogs(), documents));
 }
 
-async function getLocalDocumentsForInvoiceValidation() {
+async function getLocalInvoiceValidationState(): Promise<{
+  documents: CLCDocument[];
+  deletedInvoiceUsage: DeletedInvoiceUsage[];
+}> {
   if (isElectronStoreAvailable() && window.clcStore) {
-    return (await window.clcStore.get()).documents;
+    const store = await window.clcStore.get();
+    return {
+      documents: store.documents,
+      deletedInvoiceUsage: store.deletedInvoiceUsage || []
+    };
   }
-  return getStoredDocuments();
+  return {
+    documents: getStoredDocuments(),
+    deletedInvoiceUsage: getStoredDeletedInvoiceUsage()
+  };
 }
 
 export async function checkInvoiceUsage(
@@ -409,18 +471,38 @@ export async function checkInvoiceUsage(
     return checkSupabaseInvoiceUsage(normalizedUuid, currentDocumentId, currentItemId);
   }
 
-  const documents = await getLocalDocumentsForInvoiceValidation();
+  const { documents, deletedInvoiceUsage } = await getLocalInvoiceValidationState();
+  let belongsToCurrentItem = false;
   for (const document of documents) {
     for (const item of document.items) {
       if (normalizeInvoiceUuid(item.numFactura) !== normalizedUuid) continue;
-      if (document.id === currentDocumentId && item.id === currentItemId) continue;
+      if (document.id === currentDocumentId && item.id === currentItemId) {
+        belongsToCurrentItem = true;
+        continue;
+      }
       return {
         uuid: normalizedUuid,
         clcId: document.id,
         folio: document.folio || "BORRADOR",
-        partidaId: item.id
+        partidaId: item.id,
+        status: "active"
       };
     }
+  }
+  if (belongsToCurrentItem) return null;
+
+  const deletedUsage = [...deletedInvoiceUsage]
+    .reverse()
+    .find(usage => usage.uuid === normalizedUuid);
+  if (deletedUsage) {
+    return {
+      uuid: normalizedUuid,
+      clcId: deletedUsage.clcId,
+      folio: deletedUsage.folio,
+      partidaId: deletedUsage.partidaId,
+      status: "deleted",
+      deletedAt: deletedUsage.deletedAt
+    };
   }
   return null;
 }
@@ -439,7 +521,7 @@ export async function retireInvoiceUsage(
     return retireSupabaseInvoiceUsage(uuid, documentId, itemId, reason.trim());
   }
 
-  const documents = await getLocalDocumentsForInvoiceValidation();
+  const { documents } = await getLocalInvoiceValidationState();
   const document = documents.find(candidate => candidate.id === documentId);
   if (!document) throw new Error("No se encontró la CLC donde está registrada la factura.");
   if (document.estado === "finalizado") {

@@ -1,4 +1,10 @@
-import type { AppCatalogs, CLCDocument, FolioCounter } from "./types";
+import type {
+  AppCatalogs,
+  CLCDocument,
+  DeletedInvoiceUsage,
+  FolioCounter,
+  ReusableFolio
+} from "./types";
 
 export {};
 
@@ -14,18 +20,32 @@ declare global {
         catalogs: AppCatalogs | null;
         documents: CLCDocument[];
         folioCounters: FolioCounter[];
+        reusableFolios: ReusableFolio[];
+        deletedInvoiceUsage: DeletedInvoiceUsage[];
         dataFilePath: string;
       }>;
       saveCatalogs: (catalogs: AppCatalogs) => Promise<{
         catalogs: AppCatalogs | null;
         documents: CLCDocument[];
         folioCounters: FolioCounter[];
+        reusableFolios: ReusableFolio[];
+        deletedInvoiceUsage: DeletedInvoiceUsage[];
         dataFilePath: string;
       }>;
       saveDocuments: (documents: CLCDocument[]) => Promise<{
         catalogs: AppCatalogs | null;
         documents: CLCDocument[];
         folioCounters: FolioCounter[];
+        reusableFolios: ReusableFolio[];
+        deletedInvoiceUsage: DeletedInvoiceUsage[];
+        dataFilePath: string;
+      }>;
+      deleteDocument: (id: string) => Promise<{
+        catalogs: AppCatalogs | null;
+        documents: CLCDocument[];
+        folioCounters: FolioCounter[];
+        reusableFolios: ReusableFolio[];
+        deletedInvoiceUsage: DeletedInvoiceUsage[];
         dataFilePath: string;
       }>;
       finalizeDocument: (document: CLCDocument) => Promise<{
@@ -37,12 +57,16 @@ declare global {
         catalogs: AppCatalogs | null;
         documents: CLCDocument[];
         folioCounters: FolioCounter[];
+        reusableFolios: ReusableFolio[];
+        deletedInvoiceUsage: DeletedInvoiceUsage[];
         dataFilePath: string;
       }>;
       selectDataFolder: () => Promise<{
         catalogs: AppCatalogs | null;
         documents: CLCDocument[];
         folioCounters: FolioCounter[];
+        reusableFolios: ReusableFolio[];
+        deletedInvoiceUsage: DeletedInvoiceUsage[];
         dataFilePath: string;
       }>;
     };

@@ -62,6 +62,21 @@ export interface FolioCounter {
   lastNumber: number;
 }
 
+export interface ReusableFolio {
+  anio: number;
+  number: number;
+  folio: string;
+  deletedAt: string;
+}
+
+export interface DeletedInvoiceUsage {
+  uuid: string;
+  clcId: string;
+  folio: string;
+  partidaId: string;
+  deletedAt: string;
+}
+
 export interface AppDocumentMetrics {
   totalDocuments: number;
   finalizedCount: number;
