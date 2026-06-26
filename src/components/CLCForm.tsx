@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, type ChangeEvent } from "react";
+import { useState, useEffect, useRef, type ChangeEvent, type KeyboardEvent } from "react";
 import { AppCatalogs, CLCDocument, CLCItem, AdministrativeUnit, Bank, Provider } from "../types";
 import { Plus, Trash, Check, AlertTriangle, Calculator, FileText, ChevronRight, ChevronDown, Upload, ArchiveX } from "lucide-react";
 import {
@@ -738,22 +738,85 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
   const formatCurrencyDraft = (value: string) => {
     if (!value) return "";
     const [integerPart, decimalPart] = value.split(".");
-    const formattedInteger = Number(integerPart || "0").toLocaleString("en-US");
+    const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     return value.includes(".") ? `${formattedInteger}.${decimalPart ?? ""}` : formattedInteger;
   };
 
-  const handleCurrencyChange = (itemId: string, field: CurrencyField, event: ChangeEvent<HTMLInputElement>) => {
+  const getCurrencyCaretOffset = (formattedValue: string, sanitizedOffset: number) => {
+    if (sanitizedOffset <= 0) return 0;
+    let editableCharacters = 0;
+    for (let index = 0; index < formattedValue.length; index += 1) {
+      if (/[\d.]/.test(formattedValue[index])) editableCharacters += 1;
+      if (editableCharacters >= sanitizedOffset) return index + 1;
+    }
+    return formattedValue.length;
+  };
+
+  const applyCurrencyDraft = (
+    itemId: string,
+    field: CurrencyField,
+    input: HTMLInputElement,
+    rawValue: string,
+    rawSelectionStart: number,
+    rawSelectionEnd: number
+  ) => {
     const draftKey = getCurrencyDraftKey(itemId, field);
-    const input = event.currentTarget;
-    const rawValue = input.value;
     const sanitizedValue = sanitizeCurrencyDraft(rawValue);
-    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: rawValue }));
+    const formattedValue = formatCurrencyDraft(sanitizedValue);
+    const sanitizedSelectionStart = sanitizeCurrencyDraft(rawValue.slice(0, rawSelectionStart)).length;
+    const sanitizedSelectionEnd = sanitizeCurrencyDraft(rawValue.slice(0, rawSelectionEnd)).length;
+    const nextSelectionStart = getCurrencyCaretOffset(formattedValue, sanitizedSelectionStart);
+    const nextSelectionEnd = getCurrencyCaretOffset(formattedValue, sanitizedSelectionEnd);
+
+    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: formattedValue }));
     updateItem(itemId, field, parseCurrency(sanitizedValue));
+
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === input) {
+        input.setSelectionRange(nextSelectionStart, nextSelectionEnd);
+      }
+    });
+  };
+
+  const handleCurrencyChange = (itemId: string, field: CurrencyField, event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    applyCurrencyDraft(
+      itemId,
+      field,
+      input,
+      input.value,
+      input.selectionStart ?? input.value.length,
+      input.selectionEnd ?? input.value.length
+    );
+  };
+
+  const handleCurrencyKeyDown = (itemId: string, field: CurrencyField, event: KeyboardEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const selectionStart = input.selectionStart;
+    const selectionEnd = input.selectionEnd;
+    if (selectionStart === null || selectionEnd === null || selectionStart !== selectionEnd) return;
+
+    if (event.key === "Backspace" && selectionStart > 0 && input.value[selectionStart - 1] === ",") {
+      event.preventDefault();
+      const digitIndex = selectionStart - 2;
+      if (digitIndex < 0) return;
+      const nextValue = input.value.slice(0, digitIndex) + input.value.slice(digitIndex + 1);
+      applyCurrencyDraft(itemId, field, input, nextValue, digitIndex, digitIndex);
+    } else if (event.key === "Delete" && input.value[selectionStart] === ",") {
+      event.preventDefault();
+      const digitIndex = selectionStart + 1;
+      if (digitIndex >= input.value.length) return;
+      const nextValue = input.value.slice(0, digitIndex) + input.value.slice(digitIndex + 1);
+      applyCurrencyDraft(itemId, field, input, nextValue, selectionStart, selectionStart);
+    }
   };
 
   const handleCurrencyFocus = (itemId: string, field: CurrencyField, value: number) => {
     const draftKey = getCurrencyDraftKey(itemId, field);
-    setCurrencyDrafts(prev => ({ ...prev, [draftKey]: value ? String(value) : "" }));
+    setCurrencyDrafts(prev => ({
+      ...prev,
+      [draftKey]: value ? formatCurrencyDraft(String(value)) : ""
+    }));
   };
 
   const handleCurrencyBlur = (itemId: string, field: CurrencyField) => {
@@ -2018,6 +2081,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               onFocus={() => handleCurrencyFocus(item.id, "subTotal", item.subTotal)}
                               onBlur={() => handleCurrencyBlur(item.id, "subTotal")}
                               onChange={event => handleCurrencyChange(item.id, "subTotal", event)}
+                              onKeyDown={event => handleCurrencyKeyDown(item.id, "subTotal", event)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 font-bold font-mono text-slate-850"
                             />
                           </div>
@@ -2035,6 +2099,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               onFocus={() => handleCurrencyFocus(item.id, "descuento", item.descuento)}
                               onBlur={() => handleCurrencyBlur(item.id, "descuento")}
                               onChange={event => handleCurrencyChange(item.id, "descuento", event)}
+                              onKeyDown={event => handleCurrencyKeyDown(item.id, "descuento", event)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 font-mono text-slate-500"
                             />
                           </div>
@@ -2054,6 +2119,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               onFocus={() => handleCurrencyFocus(item.id, "iva", item.iva)}
                               onBlur={() => handleCurrencyBlur(item.id, "iva")}
                               onChange={event => handleCurrencyChange(item.id, "iva", event)}
+                              onKeyDown={event => handleCurrencyKeyDown(item.id, "iva", event)}
                               className={`w-full text-xs border border-slate-200 rounded-lg pl-5 pr-1 py-1.5 font-bold font-mono ${
                                 autoIva 
                                   ? "bg-slate-100 text-slate-500 border-dashed cursor-not-allowed" 
@@ -2075,6 +2141,7 @@ export default function CLCForm({ catalogs, onSave, onCatalogsChange, onCancel, 
                               onFocus={() => handleCurrencyFocus(item.id, "isr", item.isr)}
                               onBlur={() => handleCurrencyBlur(item.id, "isr")}
                               onChange={event => handleCurrencyChange(item.id, "isr", event)}
+                              onKeyDown={event => handleCurrencyKeyDown(item.id, "isr", event)}
                               className="w-full text-xs border border-slate-200 bg-white rounded-lg pl-5 pr-1 py-1.5 text-rose-700 font-bold font-mono"
                             />
                           </div>
